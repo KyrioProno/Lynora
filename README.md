@@ -14,7 +14,7 @@ npm run dev          # Interface sur 0.0.0.0:5173, proxy /api et /uploads
 
 Ouvrir `http://localhost:5173`. Pour servir une version compilée sur un seul port : `npm run build && npm start` (port `3001`, configurable avec `PORT`). Le serveur gère aussi les URL partageables (`/produit/:id`, `/publication/:id`, `/profil/:id`) avec métadonnées Open Graph dans la version compilée.
 
-La base est créée automatiquement dans `data/lynora.sqlite` et les photos optimisées dans `public/uploads/`. Ces deux emplacements sont ignorés par Git : **monter des volumes persistants pour un déploiement**. `DB_PATH` permet de choisir le chemin de la base. Ne pas lancer plusieurs instances du serveur sur le même fichier SQLite. Prévoir une base et un stockage d'objets partagés avant de passer à plusieurs serveurs.
+En local, la base est créée dans `data/lynora.sqlite` et les photos optimisées dans `public/uploads/`. Ces deux emplacements sont ignorés par Git. Sur Railway, l'application détecte automatiquement le volume attaché via `RAILWAY_VOLUME_MOUNT_PATH` et y place la base et les photos. Sans volume, elle refuse de démarrer pour éviter la perte de données. `DB_PATH` et `UPLOAD_DIR` restent disponibles pour d'autres déploiements. Ne pas lancer plusieurs instances sur un seul fichier SQLite.
 
 ## Parcours disponibles
 
@@ -42,10 +42,9 @@ C'est un socle fonctionnel et non une plateforme entièrement commercialisable :
 
 Le fichier `railway.json` prépare le build, le démarrage et la vérification de santé du service. Dans Railway :
 
-1. Créer un projet **Deploy from GitHub repo** et choisir `KyrioProno/Lynora` avec la branche contenant le code (après intégration de la pull request, `main`). Railway doit utiliser **un seul service / une seule réplique** pour SQLite.
-2. Ajouter un **volume persistant** au service, monté sur `/data` (un service avec volume peut nécessiter une formule payante selon l'offre Railway). Ne pas monter le volume sur le répertoire du code.
-3. Configurer les variables d'environnement `DB_PATH=/data/lynora.sqlite` et `UPLOAD_DIR=/data/uploads`. Railway définit `PORT` automatiquement ; ne pas le remplacer.
-4. Dans **Networking**, générer un domaine public HTTPS. Ce domaine est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
-5. Vérifier `/api/me` (réponse `{"user":null}` avant connexion), créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
+1. Créer un projet **Deploy from GitHub repo** et choisir `KyrioProno/Lynora`, branche `main`. Railway doit utiliser **un seul service / une seule réplique** pour SQLite.
+2. Ajouter un **volume persistant** au service, monté sur `/data` (un service avec volume peut nécessiter une formule payante selon l'offre Railway). Ne pas monter le volume sur le répertoire du code. Railway fournit automatiquement le chemin à l'application : **aucune variable d'environnement à saisir**. Si le tout premier déploiement échoue avant l'ajout du volume, c'est attendu : relancer le déploiement après l'avoir attaché.
+3. Dans **Settings → Networking**, cliquer sur **Generate Domain**. Ce domaine HTTPS est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
+4. Vérifier `/api/me` (réponse `{"user":null}` avant connexion), créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
 
 **Ne pas déployer sans volume** : une base SQLite et des photos sur le disque éphémère seraient perdues lors d'un redéploiement. Prévoir des sauvegardes du volume, une politique de confidentialité et une modération avant d'ouvrir l'application au public. Le domaine temporaire de prévisualisation Arena (`*.e2b.app`) n'est pas un hébergement permanent.

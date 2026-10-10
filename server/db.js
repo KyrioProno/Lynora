@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-const path = process.env.DB_PATH || 'data/lynora.sqlite';
-mkdirSync(dirname(path), { recursive: true });
-export const db = new DatabaseSync(path);
+import { dbPath } from './storage.js';
+mkdirSync(dirname(dbPath), { recursive: true });
+export const db = new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, username TEXT NOT NULL UNIQUE COLLATE NOCASE, bio TEXT NOT NULL DEFAULT '', avatar TEXT, interests TEXT NOT NULL DEFAULT '[]', favorites_public INTEGER NOT NULL DEFAULT 0, recommendations INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);

@@ -8,8 +8,8 @@ import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { db, get, all, run, transaction, productKey } from './db.js';
+import { uploadDir } from './storage.js';
 
-const uploadDir = resolve(process.env.UPLOAD_DIR || 'public/uploads');
 mkdirSync(uploadDir, {recursive:true});
 const app = express();
 app.disable('x-powered-by');
