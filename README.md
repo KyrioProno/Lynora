@@ -1,5 +1,15 @@
 # Lynora
 
+## Application hors ligne « L'Œil Mode » (avancement par étapes)
+
+`oeil-mode.html` est une application **séparée** de Lynora, construite dans **un seul fichier** : aucune bibliothèque, aucune police ni image externe, **aucune requête réseau**. Il suffit d'ouvrir le fichier (double-clic ou aperçu) pour l'utiliser, sans serveur ni Internet. Elle est conçue d'abord pour l'iPhone, en français.
+
+- **Étape 1 (livrée)** : écran d'accueil — identité « L'Œil Mode », illustration dessinée en SVG, gros bouton « Donner mon avis », six catégories tactiles, choix mémorisé, message volant explicatif.
+- **Données** : tout reste dans le navigateur sous le préfixe `oeilmode.` (`localStorage`). Aucun nom, aucun e-mail, aucun poste ou numéro transmis — conforme aux exigences RGPD de l'appli.
+- **Confort au doigt** : zone tactile minimale vérifiée automatiquement, très au-dessus de la règle des 44 px (bouton principal 56 px, tuiles 104 px).
+- **Vérification** : les captures de `captures/` proviennent d'un vrai Chromium piloté sans écran, qui contrôle aussi les tailles de boutons et l'absence de requête externe. Outils de test non versionnés : `npm install @sparticuz/chromium puppeteer-core` puis `node .cache/tools/shot.mjs file://<chemin>/oeil-mode.html captures` et, pour un aperçu local, `node .cache/tools/preview.mjs`.
+- **Prochaines étapes** (une seule à la fois, après validation) : écrire un avis, photo, notes par critères, liste de ses avis.
+
 Lynora est une application sociale mobile-first (PWA) autour des avis sincères, des produits, des looks et des inspirations beauté/style. Le catalogue et le fil démarrent volontairement vides : aucun profil, avis ou compteur fictif n'est injecté. Les deux images éditoriales servent uniquement d'illustrations d'ambiance.
 
 ## Démarrer
@@ -16,6 +26,95 @@ Ouvrir `http://localhost:5173`. Pour servir une version compilée sur un seul po
 
 En local, la base est créée dans `data/lynora.sqlite` et les photos optimisées dans `public/uploads/`. Ces deux emplacements sont ignorés par Git. Sur Railway, l'application détecte automatiquement le volume attaché via `RAILWAY_VOLUME_MOUNT_PATH` et y place la base et les photos. Sans volume, elle refuse de démarrer pour éviter la perte de données. `DB_PATH` et `UPLOAD_DIR` restent disponibles pour d'autres déploiements. Ne pas lancer plusieurs instances sur un seul fichier SQLite.
 
+## État du projet au regard du cahier des charges (vérifié le 13/10/2026)
+
+Tests exécutés : `npm test` (parcours API complet : inscription, avis, photos privées, permissions, statistiques, brouillons, signalements, notifications ; plus les critères par catégorie) — **3/3 réussis**. Vérification dans un vrai navigateur : **aucune erreur** sur les écrans bienvenue, fil, fiche produit, explorer, créer et profil (captures dans `captures/lynora-existante/`).
+
+**Déjà fonctionnel** : écran de bienvenue (logo, « Ton style, ta communauté », Commencer, Se connecter, exploration sans compte) · inscription/connexion/déconnexion avec bcrypt, cookie HttpOnly + SameSite, sessions persistantes, limitation de débit (4 règles) · fil paginé par curseur, recherche produits/marques/personnes/publications, filtres (catégorie, marque, prix, note, tri) · création de produits avec détection de doublons (409) · photos WebP via sharp, accès privé aux médias non publiés · avis avec note globale, critères par catégorie, prix payé, photos · fil, likes, commentaires et réponses, « avis utile », abonnements, favoris, notifications, signalements, brouillons, édition et suppression · fiche produit avec note moyenne réelle, nombre d'avis, **indicateur « Est-ce que ça vaut son prix ? »** (fonction 1) · profils, bio, intérêts, visibilité des favoris · partage natif avec métadonnées Open Graph et liens profonds (`/produit/:id`, `/publication/:id`, `/profil/:id`) · PWA installable, en-têtes helmet, thème sombre prune/rose fidèle aux références.
+
+### Listes partageables (Fonction 4, livrée le 13/10/2026)
+
+« Ma routine quotidienne », « Mes produits préférés », « À tester », « Mes indispensables petit prix » : chaque personne peut ranger des produits dans des listes et partager un lien vers elles.
+
+- **Base de données** : `collections` (propriétaire, titre, description, visibilité) et `collection_items` (produits rangés, avec leur ordre). Suppressions en cascade : retirer un produit du catalogue ou fermer un compte ne laisse jamais de ligne orpheline.
+- **API** : `GET/POST /api/collections`, `GET /api/me/collections`, `GET /api/users/:id/collections`, `GET/PATCH/DELETE /api/collections/:id`, `POST/DELETE /api/collections/:id/items`. Limites : 30 listes par personne, 60 produits par liste.
+- **Confidentialité** : une liste privée n'est lisible que par son propriétaire (403 pour tout le monde, y compris les membres connectés), et seul le propriétaire peut la modifier ou la supprimer.
+- **Écrans** : onglet « Listes » du profil (avec création et suggestions), page `/liste/:id` (modifier, rendre publique ou privée, retirer un produit, supprimer), et feuille « Ajouter à une liste » depuis chaque fiche produit, qui indique par une coche les listes où le produit est déjà rangé.
+- **Partage** : le lien `/liste/:id` produit un aperçu (titre, auteur, nombre de produits, première photo) pour les réseaux sociaux. Les listes privées gardent l'aperçu générique : rien ne fuite.
+- **Compteurs réels** : le nombre de produits et les notes affichés sont calculés à partir de la base.
+- **Test** : un test couvre la visibilité, les permissions (403 pour autrui), le refus des doublons, la note agrégée et la suppression en cascade.
+
+### Collections de looks (Fonction 2, livrée le 13/10/2026)
+
+Un look rassemble plusieurs produits **de catégories différentes** — un cabas, des baskets, un rouge à lèvres, un sérum et un parfum — et chaque pièce renvoie vers sa propre fiche produit.
+
+- **Base de données** : table `post_products` (publication, produit, position). La clé (publication, produit) empêche de ranger deux fois la même pièce. Suppression en cascade : retirer un produit du catalogue nettoie aussi les looks qui l'utilisaient.
+- **Formats concernés** : `look`, `tenue` et `comparaison`. Un avis garde un seul produit noté : les pièces ne s'appliquent pas à lui, et les pièces envoyées avec un avis sont ignorées.
+- **Règles serveur** : 12 pièces maximum, doublons ignorés silencieusement, pièce inexistante refusée (404), au moins une pièce pour un look publié et **au moins deux pour une comparaison**. Les brouillons restent enregistrables incomplets.
+- **Écrans** : dans « Créer », l'étape 03 devient « Compose ton look » avec recherche de pièces et liste où l'on retire une pièce ; sur la page d'une publication, une section « Les pièces du look » liste chaque produit avec sa catégorie, sa marque et son prix, cliquable vers la fiche ; sur une fiche produit, une section « Vu dans ces looks » montre les publications qui l'utilisent.
+- **Partage** : l'aperçu d'un look annonce ses pièces (« Un look en 5 pièces : Cabas en cuir, Baskets blanches… »).
+- **Test** : ordre et doublons des pièces, avis sans pièces, comparaison à un seul produit refusée, brouillon incomplet accepté, fiche produit qui retrouve ses looks, modification par autrui refusée (403).
+
+### Défis communautaires (Fonction 3, livrée le 13/10/2026)
+
+Une personne propose un défi (« Un look complet à 50 € », « Ma routine du matin »…), les autres participent en présentant une création, et votent quand le défi l'autorise.
+
+- **Base de données** : `challenges` (titre, règle du jeu, catégorie, budget indicatif, votes autorisés ou non, date de fin), `challenge_entries` (clé défi + personne : **une seule participation par défi**) et `challenge_votes` (clé défi + votant : **un seul vote par défi**). Suppressions en cascade partout.
+- **Règles du jeu** : on ne vote jamais pour soi-même ; un vote peut être déplacé d'une création à une autre (une personne = une voix) ; après la date de fin, participations et votes sont clos ; on ne présente que ses propres publications publiées (un brouillon est refusé) ; participer deux fois est refusé (409).
+- **Défi à budget** : si un budget est renseigné, chaque participation affiche le total des prix réellement renseignés de ses pièces, l'écart par rapport au budget, et signale les pièces sans prix. Rien n'est inventé : si aucune pièce n'a de prix, aucun total n'est affiché.
+- **Écrans** : `/defis` (défis ouverts et terminés, proposition d'un défi avec cinq idées prêtes à l'emploi), `/defi/:id` (règle du jeu, chiffres réels, participation, classement par votes, bouton « Voter »), section « Les défis du moment » dans Explorer, badge « Participe au défi… » sur la publication concernée, et bandeau du défi — avec le total des pièces — dans l'écran de création (`/creer?defi=3`).
+- **Notifications** : la personne qui a proposé le défi est prévenue d'une participation, et celle dont la création est votée aussi.
+- **Test** : couvre le titre et la règle obligatoires, le budget et la date validés, une participation par personne, la présentation de la publication d'autrui refusée, le brouillon refusé, le vote pour soi refusé, le vote déplacé, les compteurs réels, le classement, le défi sans vote, le défi terminé, le retrait d'une participation qui emporte ses votes, la suppression réservée à l'auteur et les publications préservées après suppression du défi.
+
+**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : console de modération des signalements · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
+
+### Accès privé (livré le 13/10/2026)
+
+Pour garder Lynora **rien que pour soi** tout en l'hébergeant en ligne, il suffit de définir un code au démarrage :
+
+```bash
+LYNORA_ACCESS_CODE="le-code-que-tu-choisis" npm start
+```
+
+- Sans ce code, une visite arrive sur l'écran **« Cet espace est réservé »** : ni publications, ni photos, ni comptes.
+- La protection est faite **par le serveur** : chaque adresse de l'API et chaque image envoyée répond `401` tant que le code n'a pas été saisi. Cacher l'écran ne suffirait pas ; ici, aucune donnée ne sort.
+- Le code correct est mémorisé par un cookie `HttpOnly` valable 180 jours : on ne le retape pas à chaque visite. **Changer le code déconnecte immédiatement tout le monde.**
+- Douze tentatives par quart d'heure et par adresse IP, comme pour la connexion.
+- Sans `LYNORA_ACCESS_CODE`, l'application reste ouverte comme avant : la fonction est facultative.
+
+Pour un Lynora **public** (boutique, communauté), ne pas définir cette variable et désactiver la connexion automatique des visiteurs si besoin. Les deux réglages se combinent : `LYNORA_ACCESS_CODE` garde l'ensemble fermé, `LYNORA_MODERATORS` désigne qui traite les signalements.
+
+### Console de modération (livrée le 13/10/2026)
+
+Les signalements existaient (le menu « … » d'une publication), mais personne ne pouvait les traiter. La console les rend utilisables.
+
+- **Qui est modérateur** : la liste vient du **serveur**, jamais de l'application. Au démarrage, les comptes dont l'adresse figure dans `LYNORA_MODERATORS` (adresses séparées par des virgules) reçoivent le rôle. Exemple : `LYNORA_MODERATORS="camille@exemple.fr,romy@exemple.fr" npm start`. Sans cette variable, personne n'est modérateur et la console reste inaccessible — c'est volontaire : le rôle ne peut pas s'obtenir depuis l'interface, et une modification de profil ne le change pas.
+- **Trois onglets** : « À traiter » (signalements ouverts, avec le contenu visé, sa ou son auteur, la personne qui a signalé et son motif), « Traités » (qui a décidé quoi, et quand) et « Masqués » (les contenus retirés, avec un bouton **Rétablir**).
+- **Masquer** ne supprime rien : le contenu disparaît des fils, des profils, des fiches produit et des participations aux défis, **et son auteur reçoit une notification**. Sa ou son auteur continue de le voir, avec un bandeau explicatif ; la modération aussi. Tout est réversible.
+- **Classer sans suite** laisse le contenu en ligne et prévient la personne qui a signalé.
+- Un membre qui tente d'ouvrir la console reçoit une réponse `403` ; la page « Paramètres » ne montre l'entrée « Modération » qu'aux comptes concernés.
+
+API : `GET /api/moderation/reports?status=open|resolved`, `POST /api/moderation/reports/:id` (`action: hide | dismiss`), `GET /api/moderation/hidden`, `POST /api/moderation/posts/:id/visibility` (`hidden: false` pour rétablir).
+
+Le plafond de tentatives d'authentification (20 par quart d'heure et par adresse IP) protège l'application ; il est réglable pour un hébergement partagé (atelier, même box) avec `LYNORA_AUTH_LIMIT`, par exemple `LYNORA_AUTH_LIMIT=300 npm start`.
+
+### Critères par catégorie (étape livrée le 13/10/2026)
+
+`shared/criteres.js` est désormais **la table unique** utilisée à la fois par l'interface et par le serveur : impossible que les deux divergent.
+
+| Catégorie | Critères notés (1 à 5) | Champs texte facultatifs |
+| --- | --- | --- |
+| Maquillage | qualité, tenue dans le temps, facilité d'application, résultat obtenu, rapport qualité-prix | — |
+| Soins · Beauté · Hygiène | texture et facilité d'utilisation, résultats ressentis, tolérance personnelle, rapport qualité-prix | type de peau |
+| Cheveux | mêmes critères que les soins | type de cheveux |
+| Mode · Chaussures & sacs | coupe et confort, qualité des matériaux, fidélité des couleurs et du rendu, rapport qualité-prix | taille habituelle et taille commandée |
+| Parfums | odeur perçue, tenue estimée, intensité, rapport qualité-prix | occasion d'utilisation |
+
+- Le serveur applique une **liste blanche** : un critère qui n'appartient pas à la catégorie du produit est écarté, et un critère inventé n'est jamais enregistré.
+- Les **clés internes** (`quality`, `value`, `skin`…) ne changent jamais : les avis déjà enregistrés conservent leurs critères, seuls les libellés affichés ont évolué.
+- La fiche produit **agrège les déclarations** de la communauté : par exemple « Type de peau : sèche ×1 · mixte ×1 », « Occasion : tous les jours ×2 ».
+- Trois tests couvrent la table, le nettoyage des valeurs et la liste blanche côté serveur.
+
 ## Parcours disponibles
 
 - Inscription/connexion, mot de passe haché avec bcrypt, session persistante en cookie HttpOnly/SameSite, déconnexion ; édition du profil, avatar, biographie, intérêts et visibilité des favoris.
@@ -29,14 +128,16 @@ En local, la base est créée dans `data/lynora.sqlite` et les photos optimisée
 ## Vérifier
 
 ```bash
-npm test       # parcours API sur une base temporaire : auth, avis, upload, stats, permissions, interactions
+npm test       # 8 tests sur des bases temporaires : parcours social, critères, listes partageables, pièces d'un look, défis, modération, accès privé
 npm run build  # compilation de l'interface
 npm audit --omit=dev
 ```
 
+Vérification visuelle (facultative, hors application livrée) : `npm install --no-save @sparticuz/chromium puppeteer-core`, démarrer `npm start`, puis `node tests/outils/lynora-shot.mjs`. Le script crée des données de démonstration par l'API publique, visite chaque écran dans un vrai Chromium et écrit les captures dans `captures/lynora/`. Il est rejouable : les éléments déjà créés sont réutilisés.
+
 ## Limites avant commercialisation
 
-C'est un socle fonctionnel et non une plateforme entièrement commercialisable : pas de vérification d'adresse e-mail, récupération de mot de passe, console de modération, traitement humain des signalements, suppression de compte, outils anti-abus avancés ni sauvegardes automatiques. Les signalements sont conservés en base, sans tableau de modération pour le moment. Les défis, collections partageables avancées, conversations privées et association de plusieurs produits à un look ne sont pas encore implémentés. Les recommandations actuelles utilisent les intérêts déclarés ; elles peuvent être désactivées dans les paramètres. Pour une production publique, configurer HTTPS, sauvegardes, surveillance, politique de confidentialité, traitement RGPD, vérification e-mail et stockage d'objets pérenne. Aucun service externe ni clé API n'est nécessaire en local.
+C'est un socle fonctionnel et non une plateforme entièrement commercialisable : pas de vérification d'adresse e-mail, récupération de mot de passe, suppression de compte ni d'export des données personnelles, outils anti-abus avancés ou sauvegardes automatiques. La console de modération existe mais elle est manuelle : elle demande une personne de confiance, inscrite dans `LYNORA_MODERATORS`, et rien n'est envoyé par e-mail (aucun service externe n'est branché). Les défis, collections partageables avancées, conversations privées et association de plusieurs produits à un look ne sont pas encore implémentés. Les recommandations actuelles utilisent les intérêts déclarés ; elles peuvent être désactivées dans les paramètres. Pour une production publique, configurer HTTPS, sauvegardes, surveillance, politique de confidentialité, traitement RGPD, vérification e-mail et stockage d'objets pérenne. Aucun service externe ni clé API n'est nécessaire en local.
 
 ## Déploiement avec URL permanente (Railway)
 
@@ -44,7 +145,11 @@ Le fichier `railway.json` prépare le build, le démarrage et la vérification d
 
 1. Créer un projet **Deploy from GitHub repo** et choisir `KyrioProno/Lynora`, branche `main`. Railway doit utiliser **un seul service / une seule réplique** pour SQLite.
 2. Ajouter un **volume persistant** au service, monté sur `/data` (un service avec volume peut nécessiter une formule payante selon l'offre Railway). Ne pas monter le volume sur le répertoire du code. Railway fournit automatiquement le chemin à l'application : **aucune variable d'environnement à saisir**. Si le tout premier déploiement échoue avant l'ajout du volume, c'est attendu : relancer le déploiement après l'avoir attaché.
-3. Dans **Settings → Networking**, cliquer sur **Generate Domain**. Ce domaine HTTPS est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
-4. Vérifier `/api/me` (réponse `{"user":null}` avant connexion), créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
+3. Dans **Settings → Networking**, cliquer sur **Generate Domain** (le domaine n'est pas indexé : rien ne le référence publiquement). Ce domaine HTTPS est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
+4. Dans **Variables**, ajouter les réglages utiles pour un Lynora privé :
+   - `LYNORA_ACCESS_CODE` = le code d'accès de ton choix (l'application n'est alors visible que pour toi) ;
+   - `LYNORA_MODERATORS` = ton adresse e-mail, si tu veux la console de modération ;
+   - `LYNORA_AUTH_LIMIT` (facultatif) : plafond de tentatives de connexion, 20 par défaut.
+5. Vérifier `/api/access` (réponse `{"needed":true,"ok":false}` tant que le code n'a pas été saisi), puis ouvrir le domaine : l'écran « Accès privé » doit apparaître. Saisir le code, créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
 
 **Ne pas déployer sans volume** : une base SQLite et des photos sur le disque éphémère seraient perdues lors d'un redéploiement. Prévoir des sauvegardes du volume, une politique de confidentialité et une modération avant d'ouvrir l'application au public. Le domaine temporaire de prévisualisation Arena (`*.e2b.app`) n'est pas un hébergement permanent.

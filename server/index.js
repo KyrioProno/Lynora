@@ -4,11 +4,13 @@ import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import sharp from 'sharp';
 import bcrypt from 'bcryptjs';
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { randomBytes, createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, statSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { db, get, all, run, transaction, productKey } from './db.js';
 import { uploadDir } from './storage.js';
+// Critères autorisés par catégorie : la même table que celle de l'interface.
+import { clesCriteres } from '../shared/criteres.js';
 
 mkdirSync(uploadDir, {recursive:true});
 const app = express();
@@ -19,7 +21,9 @@ app.use(helmet({ contentSecurityPolicy: false, frameguard: false, crossOriginRes
 app.use(express.json({ limit: '150kb' }));
 const limiter = rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false });
 const publishLimiter = rateLimit({ windowMs: 10 * 60_000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false, message: {error:'Tu publies trop vite. Réessaie dans quelques minutes.'} });
-const authLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Trop de tentatives. Réessaie dans quelques minutes.' } });
+// Le plafond est réglable pour un hébergement partagé (LYNORA_AUTH_LIMIT), par
+// exemple derrière une même box pendant un atelier : 20 par quart d'heure par défaut.
+const authLimiter = rateLimit({ windowMs: 15 * 60_000, limit: Number(process.env.LYNORA_AUTH_LIMIT) || 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Trop de tentatives. Réessaie dans quelques minutes.' } });
 app.use('/api', limiter);
 app.use('/api',(req,res,next)=>{ req.body ??= {}; next(); });
 // Cookie-authenticated writes must originate from this host. SameSite cookies alone do not
@@ -36,7 +40,7 @@ app.use('/api', (req,res,next) => {
 
 const categories = ['Maquillage','Mode','Beauté','Soins','Cheveux','Parfums','Lifestyle','Chaussures & sacs','Hygiène'];
 const types = ['avis','look','routine','découverte','comparaison','conseil','tenue'];
-const publicUser = u => u ? ({ id: u.id, username: u.username, bio: u.bio, avatar: u.avatar, interests: JSON.parse(u.interests || '[]'), favoritesPublic: !!u.favorites_public, recommendations: !!u.recommendations, createdAt: u.created_at }) : null;
+const publicUser = u => u ? ({ id: u.id, username: u.username, bio: u.bio, avatar: u.avatar, role: u.role || 'member', interests: JSON.parse(u.interests || '[]'), favoritesPublic: !!u.favorites_public, recommendations: !!u.recommendations, createdAt: u.created_at }) : null;
 const fail = (res, code, error) => res.status(code).json({ error });
 const text = (v, max = 500) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 const numericId = v => Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null;
@@ -44,6 +48,42 @@ const mediaOk = url => typeof url === 'string' && /^\/uploads\/[a-f0-9-]{36}\.we
 const cookie = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('lynora_session='))?.split('=')[1];
 const tokenHash = t => createHash('sha256').update(t).digest('hex');
 app.use(['/api','/uploads'], (req,res,next) => { const token = cookie(req); if (token) { const row = get('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at > ?', tokenHash(token), Date.now()); req.user = row || null; } next(); });
+/* ============================================================
+   ACCÈS PRIVÉ (facultatif)
+   ------------------------------------------------------------
+   Par défaut, Lynora est ouverte à qui connaît l'adresse. Pour la
+   garder pour soi, il suffit de définir un code au démarrage :
+
+       LYNORA_ACCESS_CODE="mon-code-secret" npm start
+
+   Sans ce code, aucune donnée ne sort : ni pages d'API, ni images
+   envoyées. Le navigateur reçoit alors l'écran « Accès privé ».
+   Le cookie d'accès ne contient pas le code, mais son empreinte :
+   changer le code déconnecte donc tout le monde d'un coup.
+   ============================================================ */
+const codeAcces = (process.env.LYNORA_ACCESS_CODE || '').trim();
+const jetonAcces = codeAcces ? createHash('sha256').update('lynora-acces:' + codeAcces).digest('hex') : '';
+const cookieAcces = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('lynora_acces='))?.split('=')[1];
+const memeTexte = (a, b) => timingSafeEqual(createHash('sha256').update(String(a)).digest(), createHash('sha256').update(String(b)).digest());
+const jetonValide = valeur => !!jetonAcces && !!valeur && memeTexte(jetonAcces, valeur);
+const accesLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Trop de tentatives. Réessaie dans quelques minutes.' } });
+const accesOuvert = req => !codeAcces || jetonValide(cookieAcces(req));
+app.get('/api/access',(req,res)=>res.json({needed:!!codeAcces,ok:accesOuvert(req)}));
+app.post('/api/access',accesLimiter,(req,res)=>{
+  if(!codeAcces)return res.json({ok:true,needed:false});
+  const saisi=text(req.body.code,200);
+  if(!saisi||!memeTexte(saisi,codeAcces))return fail(res,401,'Code incorrect.');
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https' || req.get('origin')?.startsWith('https:');
+  res.cookie('lynora_acces',jetonAcces,{ httpOnly:true, secure:!!secure, sameSite:'lax', path:'/', maxAge:180*86400_000 });
+  res.json({ok:true,needed:true});
+});
+app.post('/api/access/sortir',(req,res)=>{ res.clearCookie('lynora_acces',{path:'/',sameSite:'lax'}); res.json({ok:true}); });
+// La serrure : rien ne passe sans le cookie, sauf les deux adresses ci-dessus.
+app.use(['/api','/uploads'],(req,res,next)=>{
+  if(!codeAcces || req.originalUrl.startsWith('/api/access'))return next();
+  if(jetonValide(cookieAcces(req)))return next();
+  res.status(401).json({error:'Accès privé : ce Lynora est réservé. Saisis le code d’accès.',access:true});
+});
 app.get('/uploads/:file',(req,res)=>{
   const url='/uploads/'+req.params.file;
   if(!mediaOk(url))return fail(res,404,'Image introuvable.');
@@ -68,12 +108,16 @@ setInterval(cleanup,12*60*60_000).unref();
 function required(req,res,next) { if (!req.user) return fail(res,401,'Connecte-toi pour continuer.'); next(); }
 function session(req,res,user) { const token = randomBytes(32).toString('hex'); run('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',tokenHash(token),user.id,Date.now()+30*86400_000); const secure = req.secure || req.get('x-forwarded-proto') === 'https' || req.get('origin')?.startsWith('https:'); res.cookie('lynora_session',token,{ httpOnly:true,secure:!!secure,sameSite:'lax',path:'/',maxAge:30*86400_000 }); }
 function notice(userId, actorId, kind, postId = null) { if (userId !== actorId) run('INSERT INTO notifications(user_id,actor_id,kind,post_id) VALUES(?,?,?,?)',userId,actorId,kind,postId); }
-function postSelect(viewer) { const id = viewer?.id || 0; return `SELECT p.*, u.username,u.avatar,u.bio AS author_bio, pr.name AS product_name,pr.brand AS product_brand,pr.image AS product_image, (SELECT count(*) FROM likes l WHERE l.post_id=p.id) AS likes_count,(SELECT count(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,(SELECT count(*) FROM helpful h WHERE h.post_id=p.id) AS helpful_count, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.user_id=${id}) AS liked, EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=${id}) AS saved, EXISTS(SELECT 1 FROM helpful h WHERE h.post_id=p.id AND h.user_id=${id}) AS helped FROM posts p JOIN users u ON u.id=p.author_id LEFT JOIN products pr ON pr.id=p.product_id`; }
-function hydratePosts(rows) { return rows.map(p => ({ ...p, media: all('SELECT url FROM post_media WHERE post_id=? ORDER BY position',p.id).map(x=>x.url),criteria:JSON.parse(p.criteria || '{}'), liked:!!p.liked,saved:!!p.saved,helped:!!p.helped,draft:!!p.draft })); }
-function postById(id,viewer,allowDraft=false) { const row = get(postSelect(viewer) + ' WHERE p.id=?' + (allowDraft ? '' : ' AND p.draft=0'),id); return row ? hydratePosts([row])[0] : null; }
+function postSelect(viewer) { const id = viewer?.id || 0; return `SELECT p.*, u.username,u.avatar,u.bio AS author_bio, pr.name AS product_name,pr.brand AS product_brand,pr.image AS product_image, (SELECT count(*) FROM likes l WHERE l.post_id=p.id) AS likes_count,(SELECT count(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,(SELECT count(*) FROM helpful h WHERE h.post_id=p.id) AS helpful_count, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.user_id=${id}) AS liked, EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=${id}) AS saved, EXISTS(SELECT 1 FROM helpful h WHERE h.post_id=p.id AND h.user_id=${id}) AS helped, (SELECT ce.challenge_id FROM challenge_entries ce WHERE ce.post_id=p.id LIMIT 1) AS challenge_id, (SELECT c.title FROM challenge_entries ce JOIN challenges c ON c.id=ce.challenge_id WHERE ce.post_id=p.id LIMIT 1) AS challenge_title FROM posts p JOIN users u ON u.id=p.author_id LEFT JOIN products pr ON pr.id=p.product_id`; }
+// hydratePosts complète chaque publication avec ses médias, ses critères, ses
+// drapeaux (aimé, enregistré, utile) et, pour un look, la liste de ses pièces.
+// L'ordre choisi par l'auteur est conservé : c'est lui qui décide de présenter
+// le sac avant les chaussures, par exemple.
+function hydratePosts(rows) { return rows.map(p => ({ ...p, media: all('SELECT url FROM post_media WHERE post_id=? ORDER BY position',p.id).map(x=>x.url),pieces:all('SELECT pr.id,pr.name,pr.brand,pr.image,pr.category,pr.price FROM post_products pp JOIN products pr ON pr.id=pp.product_id WHERE pp.post_id=? ORDER BY pp.position',p.id),criteria:JSON.parse(p.criteria || '{}'), liked:!!p.liked,saved:!!p.saved,helped:!!p.helped,draft:!!p.draft })); }
+function postById(id,viewer,allowDraft=false,allowHidden=false) { const row = get(postSelect(viewer) + ' WHERE p.id=?' + (allowDraft ? '' : ' AND p.draft=0'),id); if(!row) return null; if(row.hidden && !allowHidden && viewer?.id!==row.author_id && !estModerateur(viewer)) return null; return hydratePosts([row])[0]; }
 
 app.get('/api/me',(req,res)=>res.json({ user: publicUser(req.user) }));
-app.post('/api/auth/register',authLimiter,async(req,res)=>{ const email=text(req.body.email,255).toLowerCase(); const username=text(req.body.username,24); const password=req.body.password; if (!/^\S+@\S+\.\S+$/.test(email)|| !/^[\p{L}\p{N}_.-]{3,24}$/u.test(username) || typeof password!=='string'||password.length<10||password.length>128) return fail(res,400,'Email, pseudo (3–24 caractères) et mot de passe (10 caractères minimum) requis.'); if(get('SELECT id FROM users WHERE email=? OR username=?',email,username)) return fail(res,409,'Cet email ou ce pseudo est déjà utilisé.'); const hash=await bcrypt.hash(password,12); try { const id=run('INSERT INTO users(email,username,password_hash) VALUES(?,?,?)',email,username,hash).lastInsertRowid; const user=get('SELECT * FROM users WHERE id=?',id); session(req,res,user); res.status(201).json({user:publicUser(user)}); } catch(e){ return fail(res,409,'Cet email ou ce pseudo est déjà utilisé.'); } });
+app.post('/api/auth/register',authLimiter,async(req,res)=>{ const email=text(req.body.email,255).toLowerCase(); const username=text(req.body.username,24); const password=req.body.password; if (!/^\S+@\S+\.\S+$/.test(email)|| !/^[\p{L}\p{N}_.-]{3,24}$/u.test(username) || typeof password!=='string'||password.length<10||password.length>128) return fail(res,400,'Email, pseudo (3–24 caractères) et mot de passe (10 caractères minimum) requis.'); if(get('SELECT id FROM users WHERE email=? OR username=?',email,username)) return fail(res,409,'Cet email ou ce pseudo est déjà utilisé.'); const hash=await bcrypt.hash(password,12); try { const id=run('INSERT INTO users(email,username,password_hash) VALUES(?,?,?)',email,username,hash).lastInsertRowid; if(emailsModerateurs.includes(email))run("UPDATE users SET role='moderator' WHERE id=?",id); const user=get('SELECT * FROM users WHERE id=?',id); session(req,res,user); res.status(201).json({user:publicUser(user)}); } catch(e){ return fail(res,409,'Cet email ou ce pseudo est déjà utilisé.'); } });
 app.post('/api/auth/login',authLimiter,async(req,res)=>{ const user=get('SELECT * FROM users WHERE email=?',text(req.body.email,255).toLowerCase()); if(!user || !(await bcrypt.compare(String(req.body.password||''),user.password_hash))) return fail(res,401,'Identifiants incorrects.'); session(req,res,user); res.json({user:publicUser(user)}); });
 app.post('/api/auth/logout',required,(req,res)=>{ const t=cookie(req); if(t)run('DELETE FROM sessions WHERE token_hash=?',tokenHash(t)); res.clearCookie('lynora_session',{path:'/',sameSite:'lax'}); res.json({ok:true}); });
 app.patch('/api/me',required,(req,res)=>{ const username=text(req.body.username,24); if(!/^[\p{L}\p{N}_.-]{3,24}$/u.test(username))return fail(res,400,'Pseudo invalide.'); const bio=text(req.body.bio,280); const interests=Array.isArray(req.body.interests)?req.body.interests.filter(x=>categories.includes(x)).slice(0,9):[]; const avatar=req.body.avatar; if(avatar && (!mediaOk(avatar)||!ownedMedia(req.user,avatar)))return fail(res,400,'Image invalide.'); try { const previousAvatar=req.user.avatar;run('UPDATE users SET username=?,bio=?,interests=?,avatar=?,favorites_public=?,recommendations=? WHERE id=?',username,bio,JSON.stringify(interests),avatar||null,req.body.favoritesPublic?1:0,req.body.recommendations===false?0:1,req.user.id); if(previousAvatar && previousAvatar!==avatar)removeUnusedMedia(previousAvatar);res.json({user:publicUser(get('SELECT * FROM users WHERE id=?',req.user.id))}); } catch(e){fail(res,409,'Ce pseudo est déjà utilisé.');} });
@@ -82,14 +126,39 @@ app.post('/api/upload',required,upload.array('images',5),async(req,res,next)=>{ 
 app.get('/api/categories',(req,res)=>res.json({categories}));
 app.get('/api/products',(req,res)=>{const q=text(req.query.q,80);const cat=text(req.query.category,40);const brand=text(req.query.brand,80);const max=Number(req.query.maxPrice);const minRating=Number(req.query.minRating);let where=' WHERE 1=1',args=[]; if(q){where+=' AND (pr.name LIKE ? OR pr.brand LIKE ?)';args.push(`%${q}%`,`%${q}%`);}if(categories.includes(cat)){where+=' AND pr.category=?';args.push(cat);}if(brand){where+=' AND pr.brand LIKE ?';args.push(`%${brand}%`);}if(req.query.maxPrice && Number.isFinite(max)){where+=' AND pr.price<=?';args.push(max);}const base=`SELECT pr.*,ROUND(AVG(CASE WHEN p.draft=0 THEN p.rating END),1) AS avg_rating,COUNT(CASE WHEN p.draft=0 AND p.rating IS NOT NULL THEN 1 END) AS review_count FROM products pr LEFT JOIN posts p ON p.product_id=pr.id AND p.type='avis'`; let sql=base+where+' GROUP BY pr.id';if(req.query.minRating && Number.isFinite(minRating)){sql+=' HAVING avg_rating>=?';args.push(minRating);} sql+= req.query.sort==='top'?' ORDER BY review_count DESC, avg_rating DESC, pr.id DESC':' ORDER BY pr.id DESC';sql+=' LIMIT 40';res.json({products:all(sql,...args)}); });
 app.post('/api/products',required,(req,res)=>{const name=text(req.body.name,100),brand=text(req.body.brand,80),category=text(req.body.category,40),price=req.body.price===''||req.body.price==null?null:Number(req.body.price),image=req.body.image||null;if(name.length<2||brand.length<2||!categories.includes(category)||price!==null&&(!Number.isFinite(price)||price<0||price>100000)||image&&(!mediaOk(image)||!ownedMedia(req.user,image)))return fail(res,400,'Vérifie le nom, la marque, la catégorie et le prix.');const key=productKey(brand,name);const existing=get('SELECT * FROM products WHERE product_key=?',key);if(existing)return res.status(409).json({error:'Ce produit existe déjà. Utilise sa fiche.',product:existing});try{const id=run('INSERT INTO products(name,brand,product_key,category,price,image,created_by) VALUES(?,?,?,?,?,?,?)',name,brand,key,category,price,image,req.user.id).lastInsertRowid;res.status(201).json({product:get('SELECT * FROM products WHERE id=?',id)});}catch{return fail(res,409,'Ce produit existe déjà. Utilise sa fiche.');}});
-app.get('/api/products/:id',(req,res)=>{const id=numericId(req.params.id);const product=get(`SELECT pr.*,ROUND(AVG(CASE WHEN p.draft=0 THEN p.rating END),1) AS avg_rating, COUNT(CASE WHEN p.draft=0 AND p.rating IS NOT NULL THEN 1 END) AS review_count, ROUND(AVG(CASE WHEN p.draft=0 THEN json_extract(p.criteria,'$.value') END),1) AS value_rating, EXISTS(SELECT 1 FROM saved_products sp WHERE sp.product_id=pr.id AND sp.user_id=?) AS saved FROM products pr LEFT JOIN posts p ON p.product_id=pr.id AND p.type='avis' WHERE pr.id=? GROUP BY pr.id`,req.user?.id||0,id);if(!product)return fail(res,404,'Produit introuvable.');const reviews=hydratePosts(all(postSelect(req.user)+" WHERE p.product_id=? AND p.type='avis' AND p.draft=0 ORDER BY p.id DESC LIMIT 40",id));res.json({product:{...product,saved:!!product.saved},reviews});});
+app.get('/api/products/:id',(req,res)=>{const id=numericId(req.params.id);const product=get(`SELECT pr.*,ROUND(AVG(CASE WHEN p.draft=0 THEN p.rating END),1) AS avg_rating, COUNT(CASE WHEN p.draft=0 AND p.rating IS NOT NULL THEN 1 END) AS review_count, ROUND(AVG(CASE WHEN p.draft=0 THEN json_extract(p.criteria,'$.value') END),1) AS value_rating, EXISTS(SELECT 1 FROM saved_products sp WHERE sp.product_id=pr.id AND sp.user_id=?) AS saved FROM products pr LEFT JOIN posts p ON p.product_id=pr.id AND p.type='avis' AND p.hidden=0 WHERE pr.id=? GROUP BY pr.id`,req.user?.id||0,id);if(!product)return fail(res,404,'Produit introuvable.');const reviews=hydratePosts(all(postSelect(req.user)+" WHERE p.product_id=? AND p.type='avis' AND p.draft=0 AND p.hidden=0 ORDER BY p.id DESC LIMIT 40",id));
+// Les looks publiés qui contiennent ce produit : c'est le chemin inverse
+// (de la fiche produit vers les tenues qui la mettent en valeur).
+const looks=hydratePosts(all(postSelect(req.user)+" JOIN post_products pp ON pp.post_id=p.id WHERE pp.product_id=? AND p.draft=0 AND p.hidden=0 AND p.type IN ('look','tenue','comparaison') ORDER BY p.id DESC LIMIT 6",id));
+res.json({product:{...product,saved:!!product.saved},reviews,looks});});
 app.post('/api/products/:id/save',required,(req,res)=>{const id=numericId(req.params.id);if(!get('SELECT id FROM products WHERE id=?',id))return fail(res,404,'Produit introuvable.');const exists=get('SELECT 1 FROM saved_products WHERE user_id=? AND product_id=?',req.user.id,id);if(exists)run('DELETE FROM saved_products WHERE user_id=? AND product_id=?',req.user.id,id);else run('INSERT INTO saved_products(user_id,product_id) VALUES(?,?)',req.user.id,id);res.json({saved:!exists});});
 app.get('/api/me/saved-products',required,(req,res)=>res.json({products:all('SELECT pr.* FROM saved_products s JOIN products pr ON pr.id=s.product_id WHERE s.user_id=? ORDER BY pr.id DESC',req.user.id)}));
-app.get('/api/posts',(req,res)=>{const cat=text(req.query.category,40);const author=numericId(req.query.author);const cursor=numericId(req.query.cursor);const saved=req.query.saved==='1';const drafts=req.query.drafts==='1'&&!!req.user;let where=drafts?' WHERE p.author_id=? AND p.draft=1':' WHERE p.draft=0';const args=drafts?[req.user.id]:[];if(categories.includes(cat)){where+=' AND p.category=?';args.push(cat);}const search=text(req.query.q,80);if(search){where+=' AND (p.caption LIKE ? OR pr.name LIKE ? OR pr.brand LIKE ? OR u.username LIKE ?)';args.push(...Array(4).fill(`%${search}%`));}if(author){where+=' AND p.author_id=?';args.push(author);}if(cursor){where+=' AND p.id<?';args.push(cursor);}if(saved){if(!req.user)return fail(res,401,'Connecte-toi pour voir tes favoris.');where+=' AND EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=?)';args.push(req.user.id);}const rows=all(postSelect(req.user)+where+' ORDER BY p.id DESC LIMIT 11',...args);res.json({posts:hydratePosts(rows.slice(0,10)),nextCursor:rows.length>10?rows[9].id:null});});
+app.get('/api/posts',(req,res)=>{const cat=text(req.query.category,40);const author=numericId(req.query.author);const cursor=numericId(req.query.cursor);const saved=req.query.saved==='1';const drafts=req.query.drafts==='1'&&!!req.user;let where=drafts?' WHERE p.author_id=? AND p.draft=1':' WHERE p.draft=0 AND p.hidden=0';const args=drafts?[req.user.id]:[];if(categories.includes(cat)){where+=' AND p.category=?';args.push(cat);}const search=text(req.query.q,80);if(search){where+=' AND (p.caption LIKE ? OR pr.name LIKE ? OR pr.brand LIKE ? OR u.username LIKE ?)';args.push(...Array(4).fill(`%${search}%`));}if(author){where+=' AND p.author_id=?';args.push(author);}if(cursor){where+=' AND p.id<?';args.push(cursor);}if(saved){if(!req.user)return fail(res,401,'Connecte-toi pour voir tes favoris.');where+=' AND EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=?)';args.push(req.user.id);}const rows=all(postSelect(req.user)+where+' ORDER BY p.id DESC LIMIT 11',...args);res.json({posts:hydratePosts(rows.slice(0,10)),nextCursor:rows.length>10?rows[9].id:null});});
 app.get('/api/posts/:id',(req,res)=>{const post=postById(numericId(req.params.id),req.user,true);if(!post||post.draft&&req.user?.id!==post.author_id)return fail(res,404,'Publication introuvable.');res.json({post});});
-function validatePost(body,res,user){const type=text(body.type,30),category=text(body.category,40),caption=text(body.caption,2000);const productId=numericId(body.productId);const media=Array.isArray(body.media)?body.media:[];const rating=body.rating==null?null:Number(body.rating);const price=body.pricePaid===''||body.pricePaid==null?null:Number(body.pricePaid);const criteria=body.criteria&&typeof body.criteria==='object'&&!Array.isArray(body.criteria)?body.criteria:{};const cleaned={};for(const [k,v] of Object.entries(criteria).slice(0,12)){if(!/^[a-zA-Z_]{1,30}$/.test(k))continue;if(typeof v==='number'&&Number.isInteger(v)&&v>=1&&v<=5||typeof v==='string'&&v.length<=100)cleaned[k]=v;}if(!types.includes(type)||!categories.includes(category)||(!body.draft&&caption.length<10)||media.length>5||!media.every(url=>mediaOk(url)&&ownedMedia(user,url))||price!==null&&(!Number.isFinite(price)||price<0||price>100000)||rating!==null&&(!Number.isInteger(rating)||rating<1||rating>5)||type==='avis'&&(!productId||!rating)&&!body.draft)return fail(res,400,'Vérifie le format, la description (10 caractères minimum), le produit et la note de ton avis.');if(productId){const product=get('SELECT id,category FROM products WHERE id=?',productId);if(!product)return fail(res,404,'Produit introuvable.');if(type==='avis'&&product.category!==category)return fail(res,400,'La catégorie de l’avis doit correspondre au produit.');}return {type,category,caption,productId,rating:type==='avis'?rating:null,price,criteria:JSON.stringify(cleaned),media,draft:body.draft?1:0};}
-app.post('/api/posts',required,publishLimiter,(req,res)=>{const v=validatePost(req.body,res,req.user);if(!v)return;if(v.type==='avis'&&!v.draft&&get("SELECT id FROM posts WHERE author_id=? AND product_id=? AND type='avis' AND draft=0",req.user.id,v.productId))return fail(res,409,'Tu as déjà publié un avis sur ce produit. Modifie-le plutôt.');const id=transaction(()=>{const id=run('INSERT INTO posts(author_id,type,category,caption,product_id,rating,price_paid,criteria,draft) VALUES(?,?,?,?,?,?,?,?,?)',req.user.id,v.type,v.category,v.caption,v.productId,v.rating,v.price,v.criteria,v.draft).lastInsertRowid;v.media.forEach((url,i)=>run('INSERT INTO post_media(post_id,url,position) VALUES(?,?,?)',id,url,i));return id;});res.status(201).json({post:postById(id,req.user,true)});});
-app.patch('/api/posts/:id',required,(req,res)=>{const old=get('SELECT * FROM posts WHERE id=?',numericId(req.params.id));if(!old)return fail(res,404,'Publication introuvable.');if(old.author_id!==req.user.id)return fail(res,403,'Tu ne peux modifier que ton contenu.');const v=validatePost(req.body,res,req.user);if(!v)return;if(v.type==='avis'&&!v.draft&&get("SELECT id FROM posts WHERE author_id=? AND product_id=? AND type='avis' AND draft=0 AND id!=?",req.user.id,v.productId,old.id))return fail(res,409,'Tu as déjà publié un avis sur ce produit. Modifie-le plutôt.');const previousMedia=all('SELECT url FROM post_media WHERE post_id=?',old.id).map(m=>m.url);transaction(()=>{run("UPDATE posts SET type=?,category=?,caption=?,product_id=?,rating=?,price_paid=?,criteria=?,draft=?,updated_at=datetime('now') WHERE id=?",v.type,v.category,v.caption,v.productId,v.rating,v.price,v.criteria,v.draft,old.id);run('DELETE FROM post_media WHERE post_id=?',old.id);v.media.forEach((url,i)=>run('INSERT INTO post_media(post_id,url,position) VALUES(?,?,?)',old.id,url,i));});previousMedia.forEach(removeUnusedMedia);res.json({post:postById(old.id,req.user,true)});});
+function validatePost(body,res,user){const type=text(body.type,30),category=text(body.category,40),caption=text(body.caption,2000);const productId=numericId(body.productId);const media=Array.isArray(body.media)?body.media:[];const rating=body.rating==null?null:Number(body.rating);const price=body.pricePaid===''||body.pricePaid==null?null:Number(body.pricePaid);const criteria=body.criteria&&typeof body.criteria==='object'&&!Array.isArray(body.criteria)?body.criteria:{};// Liste blanche : on ne garde que les critères prévus pour cette catégorie
+// (les clés inventées sont écartées silencieusement, sans casser les anciens clients).
+const cleaned={};const autorisees=new Set(clesCriteres(category));for(const [k,v] of Object.entries(criteria).slice(0,12)){if(!autorisees.has(k))continue;if(typeof v==='number'&&Number.isInteger(v)&&v>=1&&v<=5)cleaned[k]=v;else if(typeof v==='string'&&v.trim().length>=1&&v.trim().length<=60)cleaned[k]=v.trim();}if(!types.includes(type)||!categories.includes(category)||(!body.draft&&caption.length<10)||media.length>5||!media.every(url=>mediaOk(url)&&ownedMedia(user,url))||price!==null&&(!Number.isFinite(price)||price<0||price>100000)||rating!==null&&(!Number.isInteger(rating)||rating<1||rating>5)||type==='avis'&&(!productId||!rating)&&!body.draft)return fail(res,400,'Vérifie le format, la description (10 caractères minimum), le produit et la note de ton avis.');
+if(productId){const product=get('SELECT id,category FROM products WHERE id=?',productId);if(!product)return fail(res,404,'Produit introuvable.');if(type==='avis'&&product.category!==category)return fail(res,400,'La catégorie de l’avis doit correspondre au produit.');}
+// ---- Les pièces d'un look (Fonction 2) ----
+// Un avis garde un seul produit noté. Un look, une tenue ou une comparaison
+// peuvent rassembler plusieurs pièces, de catégories différentes, dans
+// l'ordre voulu par l'auteur. On refuse les doublons sans faire d'erreur.
+const AVEC_PIECES=['look','tenue','comparaison'];
+let pieces=[];
+if(AVEC_PIECES.includes(type)){
+  const demandees=Array.isArray(body.productIds)?body.productIds:[];
+  for(const brut of demandees.slice(0,12)){
+    const id=numericId(brut);
+    if(!id||pieces.includes(id))continue;                                  // identifiant invalide ou déjà présent : ignoré
+    if(!get('SELECT id FROM products WHERE id=?',id))return fail(res,404,`Une des pièces est introuvable (n° ${id}). Choisis un produit existant ou crée sa fiche.`);
+    pieces.push(id);
+  }
+  if(!body.draft&&type==='comparaison'&&pieces.length<2)return fail(res,400,'Une comparaison demande au moins deux produits.');
+  if(!body.draft&&type!=='comparaison'&&pieces.length<1)return fail(res,400,'Ajoute au moins une pièce à ton look : c’est ce qui permet aux autres de la retrouver.');
+}
+return {type,category,caption,productId,rating:type==='avis'?rating:null,price,criteria:JSON.stringify(cleaned),media,pieces,draft:body.draft?1:0};}
+app.post('/api/posts',required,publishLimiter,(req,res)=>{const v=validatePost(req.body,res,req.user);if(!v)return;if(v.type==='avis'&&!v.draft&&get("SELECT id FROM posts WHERE author_id=? AND product_id=? AND type='avis' AND draft=0",req.user.id,v.productId))return fail(res,409,'Tu as déjà publié un avis sur ce produit. Modifie-le plutôt.');const id=transaction(()=>{const id=run('INSERT INTO posts(author_id,type,category,caption,product_id,rating,price_paid,criteria,draft) VALUES(?,?,?,?,?,?,?,?,?)',req.user.id,v.type,v.category,v.caption,v.productId,v.rating,v.price,v.criteria,v.draft).lastInsertRowid;v.media.forEach((url,i)=>run('INSERT INTO post_media(post_id,url,position) VALUES(?,?,?)',id,url,i));v.pieces.forEach((productId,i)=>run('INSERT INTO post_products(post_id,product_id,position) VALUES(?,?,?)',id,productId,i));return id;});res.status(201).json({post:postById(id,req.user,true)});});
+app.patch('/api/posts/:id',required,(req,res)=>{const old=get('SELECT * FROM posts WHERE id=?',numericId(req.params.id));if(!old)return fail(res,404,'Publication introuvable.');if(old.author_id!==req.user.id)return fail(res,403,'Tu ne peux modifier que ton contenu.');const v=validatePost(req.body,res,req.user);if(!v)return;if(v.type==='avis'&&!v.draft&&get("SELECT id FROM posts WHERE author_id=? AND product_id=? AND type='avis' AND draft=0 AND id!=?",req.user.id,v.productId,old.id))return fail(res,409,'Tu as déjà publié un avis sur ce produit. Modifie-le plutôt.');const previousMedia=all('SELECT url FROM post_media WHERE post_id=?',old.id).map(m=>m.url);transaction(()=>{run("UPDATE posts SET type=?,category=?,caption=?,product_id=?,rating=?,price_paid=?,criteria=?,draft=?,updated_at=datetime('now') WHERE id=?",v.type,v.category,v.caption,v.productId,v.rating,v.price,v.criteria,v.draft,old.id);run('DELETE FROM post_media WHERE post_id=?',old.id);v.media.forEach((url,i)=>run('INSERT INTO post_media(post_id,url,position) VALUES(?,?,?)',old.id,url,i));run('DELETE FROM post_products WHERE post_id=?',old.id);v.pieces.forEach((productId,i)=>run('INSERT INTO post_products(post_id,product_id,position) VALUES(?,?,?)',old.id,productId,i));});previousMedia.forEach(removeUnusedMedia);res.json({post:postById(old.id,req.user,true)});});
 app.delete('/api/posts/:id',required,(req,res)=>{const post=get('SELECT author_id FROM posts WHERE id=?',numericId(req.params.id));if(!post)return fail(res,404,'Publication introuvable.');if(post.author_id!==req.user.id)return fail(res,403,'Action interdite.');const urls=all('SELECT url FROM post_media WHERE post_id=?',numericId(req.params.id)).map(m=>m.url);run('DELETE FROM posts WHERE id=?',numericId(req.params.id));urls.forEach(removeUnusedMedia);res.json({ok:true});});
 function toggle(table,column,req,res){const post=get('SELECT id,author_id FROM posts WHERE id=? AND draft=0',numericId(req.params.id));if(!post)return fail(res,404,'Publication introuvable.');const exists=get(`SELECT 1 FROM ${table} WHERE user_id=? AND ${column}=?`,req.user.id,post.id);if(exists)run(`DELETE FROM ${table} WHERE user_id=? AND ${column}=?`,req.user.id,post.id);else {run(`INSERT INTO ${table}(user_id,${column}) VALUES(?,?)`,req.user.id,post.id);if(table==='likes')notice(post.author_id,req.user.id,'like',post.id);if(table==='helpful')notice(post.author_id,req.user.id,'helpful',post.id);}res.json({active:!exists,count:get(`SELECT count(*) AS count FROM ${table} WHERE ${column}=?`,post.id).count});}
 app.post('/api/posts/:id/like',required,(req,res)=>toggle('likes','post_id',req,res));
@@ -103,6 +172,320 @@ app.get('/api/users/:id',(req,res)=>{const id=numericId(req.params.id);const use
 app.get('/api/users/:id/saved-products',(req,res)=>{const id=numericId(req.params.id);const user=get('SELECT id,favorites_public FROM users WHERE id=?',id);if(!user)return fail(res,404,'Profil introuvable.');if(!user.favorites_public && req.user?.id!==id)return fail(res,403,'Ces favoris sont privés.');res.json({products:all('SELECT pr.* FROM saved_products sp JOIN products pr ON pr.id=sp.product_id WHERE sp.user_id=? ORDER BY pr.id DESC LIMIT 50',id)});});
 app.post('/api/users/:id/follow',required,(req,res)=>{const id=numericId(req.params.id);if(!get('SELECT id FROM users WHERE id=?',id))return fail(res,404,'Profil introuvable.');if(id===req.user.id)return fail(res,400,'Tu ne peux pas te suivre.');const exists=get('SELECT 1 FROM follows WHERE follower_id=? AND followed_id=?',req.user.id,id);if(exists)run('DELETE FROM follows WHERE follower_id=? AND followed_id=?',req.user.id,id);else{run('INSERT INTO follows(follower_id,followed_id) VALUES(?,?)',req.user.id,id);notice(id,req.user.id,'follow');}res.json({following:!exists,followers:get('SELECT count(*) AS n FROM follows WHERE followed_id=?',id).n});});
 app.get('/api/me/following',required,(req,res)=>res.json({users:all('SELECT u.id,u.username,u.avatar,u.bio FROM follows f JOIN users u ON u.id=f.followed_id WHERE f.follower_id=? ORDER BY u.username',req.user.id)}));
+
+/* ============================================================
+   DÉFIS COMMUNAUTAIRES (Fonction 3)
+   Une personne propose un défi (« un look complet à 50 € », « ta routine
+   du matin »…), les autres participent en présentant une création, et
+   votent quand le défi l'autorise.
+   Règles appliquées : une seule participation par personne et par défi,
+   un seul vote par personne et par défi, on ne vote pas pour soi-même,
+   et rien n'est accepté après la date de fin. Tous les compteurs
+   (participations, votes) sont comptés en base : aucun chiffre inventé.
+   ============================================================ */
+const DEFIS_PAR_PERSONNE = 20;      // garde-fou anti-spam
+const PARTICIPATIONS_VISIBLES = 60; // on n'affiche pas 500 participations d'un coup
+const maintenant = () => new Date().toISOString().slice(0, 19).replace('T', ' ');   // même format que la base
+
+// Compteurs réels + ma participation + mon vote, pour une liste de défis.
+function avecCompteurs(defis,user){
+  for(const defi of defis){
+    defi.entries_count=get('SELECT count(*) AS n FROM challenge_entries WHERE challenge_id=?',defi.id).n;
+    defi.votes_count=get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=?',defi.id).n;
+    defi.my_entry=user?get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,user.id)?.post_id||null:null;
+    defi.my_vote=user?get('SELECT post_id FROM challenge_votes WHERE challenge_id=? AND voter_id=?',defi.id,user.id)?.post_id||null:null;
+    defi.finished=!!defi.ends_at&&defi.ends_at<=maintenant();
+  }
+  return defis;
+}
+const defiById=id=>id?get('SELECT c.*,u.username,u.avatar FROM challenges c JOIN users u ON u.id=c.author_id WHERE c.id=?',id):null;
+
+app.get('/api/challenges',(req,res)=>{
+  const statut=text(req.query.status,10);
+  // « ouverts » = sans date de fin, ou dont la date n'est pas encore passée.
+  const filtre=statut==='past'?'AND c.ends_at IS NOT NULL AND c.ends_at<=?':statut==='open'?'AND (c.ends_at IS NULL OR c.ends_at>?)':'';
+  const ordre=statut==='past'?'c.ends_at ASC':'c.ends_at DESC';
+  const defis=all(`SELECT c.*,u.username,u.avatar FROM challenges c JOIN users u ON u.id=c.author_id WHERE 1=1 ${filtre} ORDER BY c.ends_at IS NULL, ${ordre}, c.id DESC LIMIT 40`,...(filtre?[maintenant()]:[]));
+  res.json({challenges:avecCompteurs(defis,req.user)});
+});
+
+app.get('/api/challenges/:id',(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  avecCompteurs([defi],req.user);
+  // Les participations : la publication de chaque personne, avec ses votes réels.
+  const participations=hydratePosts(all(`${postSelect(req.user)} JOIN challenge_entries ce ON ce.post_id=p.id WHERE ce.challenge_id=? AND p.draft=0 AND p.hidden=0 ORDER BY p.id DESC LIMIT ?`,defi.id,PARTICIPATIONS_VISIBLES));
+  for(const participation of participations){
+    participation.votes_count=get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,participation.id).n;
+    participation.mine=participation.author_id===req.user?.id;
+    // Défi à budget : on additionne les prix réellement renseignés des pièces.
+    if(defi.budget!=null){
+      const prix=participation.pieces.map(x=>x.price).filter(x=>typeof x==='number');
+      participation.estimated_total=prix.length?prix.reduce((a,b)=>a+b,0):null;
+      participation.pieces_without_price=participation.pieces.length-prix.length;
+    }
+  }
+  // Classement : le plus de votes d'abord, puis la publication la plus récente.
+  participations.sort((a,b)=>b.votes_count-a.votes_count||b.id-a.id);
+  res.json({challenge:defi,entries:participations});
+});
+
+function validerDefi(body,res){
+  const title=text(body.title,80),brief=text(body.brief,600),category=text(body.category,40);
+  const budget=body.budget===''||body.budget==null?null:Number(body.budget);
+  const votes_allowed=body.votesAllowed===false?0:1;
+  const ends_at=text(body.endsAt,30)||null;
+  if(title.length<4)return fail(res,400,'Donne un titre de 4 caractères minimum à ton défi.');
+  if(brief.length<10)return fail(res,400,'Explique la règle du jeu en 10 caractères minimum.');
+  if(!categories.includes(category))return fail(res,400,'Choisis une catégorie pour ton défi.');
+  if(budget!==null&&(!Number.isFinite(budget)||budget<=0||budget>1000000))return fail(res,400,'Le budget doit être un nombre positif en euros.');
+  // La date de fin doit être une date valide, dans le futur.
+  if(ends_at){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(ends_at))return fail(res,400,'La date de fin doit être au format année-mois-jour.');
+    if(ends_at<=new Date().toISOString().slice(0,10))return fail(res,400,'La date de fin doit être dans le futur.');
+  }
+  return {title,brief,category,budget,votes_allowed,ends_at};
+}
+app.post('/api/challenges',required,publishLimiter,(req,res)=>{
+  const v=validerDefi(req.body,res); if(!v)return;
+  if(get('SELECT count(*) AS n FROM challenges WHERE author_id=?',req.user.id).n>=DEFIS_PAR_PERSONNE)return fail(res,400,`Tu as atteint la limite de ${DEFIS_PAR_PERSONNE} défis proposés.`);
+  const id=run('INSERT INTO challenges(author_id,title,brief,category,budget,votes_allowed,ends_at) VALUES(?,?,?,?,?,?,?)',req.user.id,v.title,v.brief,v.category,v.budget,v.votes_allowed,v.ends_at).lastInsertRowid;
+  res.status(201).json({challenge:avecCompteurs([defiById(id)],req.user)[0]});
+});
+app.delete('/api/challenges/:id',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(defi.author_id!==req.user.id)return fail(res,403,'Tu ne peux supprimer que tes défis.');
+  run('DELETE FROM challenges WHERE id=?',defi.id);   // participations et votes partent avec (CASCADE)
+  res.json({ok:true});
+});
+// Participer : on présente une de ses publications publiées. Une seule par défi.
+app.post('/api/challenges/:id/entries',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(defi.ends_at&&defi.ends_at<=maintenant())return fail(res,400,'Ce défi est terminé : les participations sont closes.');
+  const postId=numericId(req.body.postId);
+  const post=postId?get('SELECT id,author_id,draft FROM posts WHERE id=?',postId):null;
+  if(!post||post.draft)return fail(res,404,'Publication introuvable.');
+  if(post.author_id!==req.user.id)return fail(res,403,'Tu ne peux présenter que tes propres publications.');
+  if(get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id))return fail(res,409,'Tu participes déjà à ce défi.');
+  run('INSERT INTO challenge_entries(challenge_id,post_id,user_id) VALUES(?,?,?)',defi.id,post.id,req.user.id);
+  notice(defi.author_id,req.user.id,'challenge_entry',post.id);   // la personne qui a proposé le défi est prévenue
+  res.status(201).json({ok:true,entries_count:get('SELECT count(*) AS n FROM challenge_entries WHERE challenge_id=?',defi.id).n});
+});
+// Retirer sa participation ; les votes reçus repartent avec elle.
+app.delete('/api/challenges/:id/entries',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  const participation=get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id);
+  if(!participation)return fail(res,404,'Tu ne participes pas à ce défi.');
+  run('DELETE FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id);
+  run('DELETE FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,participation.post_id);
+  res.json({ok:true});
+});
+// Voter : un seul vote par personne et par défi, jamais pour soi-même.
+app.post('/api/challenges/:id/votes',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(!defi.votes_allowed)return fail(res,400,'Ce défi ne prévoit pas de vote.');
+  if(defi.ends_at&&defi.ends_at<=maintenant())return fail(res,400,'Ce défi est terminé : les votes sont clos.');
+  const postId=numericId(req.body.postId);
+  const participation=get('SELECT user_id FROM challenge_entries WHERE challenge_id=? AND post_id=?',defi.id,postId||0);
+  if(!participation)return fail(res,404,'Cette participation n’existe pas dans ce défi.');
+  if(participation.user_id===req.user.id)return fail(res,400,'On ne vote pas pour sa propre participation.');
+  // Re-voter remplace le vote précédent : une personne = une voix, déplaçable.
+  run("INSERT INTO challenge_votes(challenge_id,voter_id,post_id) VALUES(?,?,?) ON CONFLICT(challenge_id,voter_id) DO UPDATE SET post_id=excluded.post_id, created_at=datetime('now')",defi.id,req.user.id,postId);
+  notice(participation.user_id,req.user.id,'challenge_vote',postId);
+  res.json({ok:true,votes_count:get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,postId).n,my_vote:postId});
+});
+
+/* ============================================================
+   MODÉRATION (sécurité de la communauté)
+   Les signalements existaient déjà, mais personne ne pouvait les
+   traiter. Voici la console : voir les signalements, masquer un
+   contenu, ou classer sans suite — et rétablir un contenu masqué.
+   Qui est modérateur : la liste vient du SERVEUR (variable
+   d'environnement LYNORA_MODERATORS="email1,email2"), jamais de
+   l'application. Aucun moyen de se promouvoir soi-même.
+   ============================================================ */
+const emailsModerateurs = (process.env.LYNORA_MODERATORS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+
+function estModerateur(u){ return !!u && u.role === 'moderator'; }
+function requiredModerateur(req,res,next){
+  if(!req.user)return fail(res,401,'Connecte-toi pour continuer.');
+  if(!estModerateur(req.user))return fail(res,403,'Cette page est réservée à la modération.');
+  next();
+}
+// Appliqué au démarrage : si un compte correspond à la liste, il devient modérateur.
+function appliquerModerateurs(){ for(const email of emailsModerateurs) run("UPDATE users SET role='moderator' WHERE lower(email)=?",email); }
+appliquerModerateurs();
+
+// Un contenu masqué : le retirer des listes publiques et prévenir son auteur.
+function masquer(postId,moderateur,motif){
+  const post=get('SELECT id,author_id,hidden FROM posts WHERE id=?',postId);
+  if(!post)return null;
+  run('UPDATE posts SET hidden=1 WHERE id=?',post.id);
+  if(!post.hidden)notice(post.author_id,moderateur.id,'moderation',post.id);   // on ne prévient qu'une fois
+  run("UPDATE reports SET status='resolved',action='hide',resolved_by=?,resolved_at=datetime('now') WHERE post_id=? AND status='open'",moderateur.id,post.id);
+  return post;
+}
+function retablir(postId,moderateur){
+  const post=get('SELECT id,author_id,hidden FROM posts WHERE id=?',postId);
+  if(!post)return null;
+  run('UPDATE posts SET hidden=0 WHERE id=?',post.id);
+  if(post.hidden)notice(post.author_id,moderateur.id,'moderation_restore',post.id);
+  return post;
+}
+
+// Le tableau de bord : les signalements, avec le contenu visé et son auteur.
+app.get('/api/moderation/reports',requiredModerateur,(req,res)=>{
+  const statut=text(req.query.status,10)||'open';
+  const filtre=statut==='open'?"WHERE r.status='open'":statut==='resolved'?"WHERE r.status!='open'":'';
+  const signalements=all(`SELECT r.id,r.reason,r.status,r.action,r.created_at,r.resolved_at,r.post_id,
+      u.username AS reporter_name,u.id AS reporter_id,
+      p.caption,p.hidden,p.draft,p.author_id,
+      a.username AS author_name,a.avatar AS author_avatar,
+      m.username AS resolved_by_name,
+      (SELECT url FROM post_media WHERE post_id=p.id ORDER BY position LIMIT 1) AS image,
+      (SELECT count(*) FROM reports r2 WHERE r2.post_id=r.post_id AND r2.status='open') AS open_reports
+    FROM reports r JOIN users u ON u.id=r.reporter_id JOIN posts p ON p.id=r.post_id JOIN users a ON a.id=p.author_id
+    LEFT JOIN users m ON m.id=r.resolved_by ${filtre} ORDER BY r.id DESC LIMIT 60`);
+  res.json({reports:signalements,open_count:get("SELECT count(*) AS n FROM reports WHERE status='open'").n,waiting:!!emailsModerateurs.length});
+});
+
+// Les contenus masqués, pour pouvoir revenir en arrière.
+app.get('/api/moderation/hidden',requiredModerateur,(req,res)=>{
+  const contenus=all(`SELECT p.id,p.caption,p.category,p.type,p.created_at,p.author_id,a.username AS author_name,a.avatar AS author_avatar,
+      (SELECT url FROM post_media WHERE post_id=p.id ORDER BY position LIMIT 1) AS image,
+      (SELECT count(*) FROM posts x WHERE x.hidden=1) AS hidden_total
+    FROM posts p JOIN users a ON a.id=p.author_id WHERE p.hidden=1 ORDER BY p.id DESC LIMIT 60`);
+  res.json({posts:contenus.map(({hidden_total,...reste})=>reste),hidden_total:contenus[0]?.hidden_total||0});
+});
+
+// Traiter un signalement : masquer le contenu, ou classer sans suite.
+app.post('/api/moderation/reports/:id',requiredModerateur,(req,res)=>{
+  const signalement=get('SELECT * FROM reports WHERE id=?',numericId(req.params.id));
+  if(!signalement)return fail(res,404,'Signalement introuvable.');
+  const action=text(req.body.action,20);
+  if(!['hide','dismiss'].includes(action))return fail(res,400,'Choisis « masquer » ou « classer sans suite ».');
+  if(action==='hide'){
+    const post=masquer(signalement.post_id,req.user);
+    if(!post)return fail(res,404,'La publication visée n’existe plus.');
+    return res.json({ok:true,action:'hide',hidden:true,open_count:get("SELECT count(*) AS n FROM reports WHERE status='open'").n});
+  }
+  run("UPDATE reports SET status='resolved',action='dismiss',resolved_by=?,resolved_at=datetime('now') WHERE id=?",req.user.id,signalement.id);
+  notice(signalement.reporter_id,req.user.id,'report_resolved',signalement.post_id);
+  res.json({ok:true,action:'dismiss',hidden:false,open_count:get("SELECT count(*) AS n FROM reports WHERE status='open'").n});
+});
+
+// Masquer ou rétablir directement un contenu (sans passer par un signalement).
+app.post('/api/moderation/posts/:id/visibility',requiredModerateur,(req,res)=>{
+  const postId=numericId(req.params.id);
+  if(!postId||!get('SELECT id FROM posts WHERE id=?',postId))return fail(res,404,'Publication introuvable.');
+  if(req.body.hidden===false){
+    retablir(postId,req.user);
+    return res.json({ok:true,hidden:false});
+  }
+  masquer(postId,req.user);
+  res.json({ok:true,hidden:true});
+});
+
+/* ============================================================
+   LISTES PARTAGEABLES (« Mes listes » — Fonction 4)
+   Une personne range des produits dans des listes (« Ma routine
+   quotidienne », « À tester »…) et peut partager un lien vers elles.
+   Règles appliquées : une liste privée n'est lisible que par son
+   propriétaire, seul le propriétaire peut la modifier, et les
+   compteurs affichés viennent toujours de la base (aucun chiffre
+   inventé). Un produit retiré du catalogue disparaît de la liste
+   automatiquement (ON DELETE CASCADE).
+   ============================================================ */
+const VISIBILITES = new Set(['public','private']);
+const LISTES_PAR_PERSONNE = 30;   // garde-fou anti-spam
+const PRODUITS_PAR_LISTE = 60;    // idem
+
+// Complète chaque liste avec le nombre de produits et jusqu'à 3 vignettes de couverture.
+function avecCouvertures(listes){
+  for(const liste of listes){
+    liste.items_count=get('SELECT count(*) AS n FROM collection_items WHERE collection_id=?',liste.id).n;
+    liste.covers=all('SELECT pr.image FROM collection_items ci JOIN products pr ON pr.id=ci.product_id WHERE ci.collection_id=? AND pr.image IS NOT NULL ORDER BY ci.position,ci.added_at LIMIT 3',liste.id).map(r=>r.image);
+  }
+  return listes;
+}
+const listeById=id=>id?get('SELECT c.*,u.username,u.avatar FROM collections c JOIN users u ON u.id=c.owner_id WHERE c.id=?',id):null;
+const listeVisible=(liste,user)=>liste.visibility==='public'||user?.id===liste.owner_id;
+
+// Mes listes (avec, si demandé, le drapeau « ce produit y est déjà » pour l'écran d'ajout).
+app.get('/api/me/collections',required,(req,res)=>{
+  const produit=numericId(req.query.productId);
+  const listes=avecCouvertures(all('SELECT * FROM collections WHERE owner_id=? ORDER BY id DESC',req.user.id));
+  if(produit)for(const liste of listes)liste.has_product=!!get('SELECT 1 AS present FROM collection_items WHERE collection_id=? AND product_id=?',liste.id,produit);
+  res.json({collections:listes});
+});
+
+// Les listes d'un profil : les publiques pour tout le monde, toutes si c'est moi.
+app.get('/api/users/:id/collections',(req,res)=>{
+  const id=numericId(req.params.id);
+  if(!get('SELECT id FROM users WHERE id=?',id))return fail(res,404,'Profil introuvable.');
+  const mien=req.user?.id===id;
+  res.json({collections:avecCouvertures(all("SELECT * FROM collections WHERE owner_id=? AND (visibility='public' OR ?=1) ORDER BY id DESC",id,mien?1:0))});
+});
+
+// Détail d'une liste : ses produits et leurs notes réelles.
+app.get('/api/collections/:id',(req,res)=>{
+  const liste=listeById(numericId(req.params.id));
+  if(!liste)return fail(res,404,'Liste introuvable.');
+  if(!listeVisible(liste,req.user))return fail(res,403,'Cette liste est privée.');
+  const products=all("SELECT pr.*,ROUND(AVG(CASE WHEN p.draft=0 THEN p.rating END),1) AS avg_rating,COUNT(CASE WHEN p.draft=0 AND p.rating IS NOT NULL THEN 1 END) AS review_count FROM collection_items ci JOIN products pr ON pr.id=ci.product_id LEFT JOIN posts p ON p.product_id=pr.id AND p.type='avis' WHERE ci.collection_id=? GROUP BY pr.id ORDER BY ci.position,ci.added_at",liste.id);
+  res.json({collection:{...liste,items_count:products.length,mine:req.user?.id===liste.owner_id},products});
+});
+
+// Lecture du formulaire (titre, description, visibilité), partagée par la création et la modification.
+function validerListe(body,res){
+  const title=text(body.title,60),description=text(body.description,300);
+  const visibility=VISIBILITES.has(body.visibility)?body.visibility:'public';
+  if(title.length<2)return fail(res,400,'Donne un titre de 2 caractères minimum à ta liste.');
+  return {title,description,visibility};
+}
+app.post('/api/collections',required,publishLimiter,(req,res)=>{
+  const v=validerListe(req.body,res); if(!v)return;
+  if(get('SELECT count(*) AS n FROM collections WHERE owner_id=?',req.user.id).n>=LISTES_PAR_PERSONNE)return fail(res,400,`Tu as atteint la limite de ${LISTES_PAR_PERSONNE} listes.`);
+  const id=run('INSERT INTO collections(owner_id,title,description,visibility) VALUES(?,?,?,?)',req.user.id,v.title,v.description,v.visibility).lastInsertRowid;
+  res.status(201).json({collection:{...listeById(id),items_count:0,covers:[],mine:true}});
+});
+app.patch('/api/collections/:id',required,(req,res)=>{
+  const liste=listeById(numericId(req.params.id));
+  if(!liste)return fail(res,404,'Liste introuvable.');
+  if(liste.owner_id!==req.user.id)return fail(res,403,'Tu ne peux modifier que tes listes.');
+  const v=validerListe(req.body,res); if(!v)return;
+  run("UPDATE collections SET title=?,description=?,visibility=?,updated_at=datetime('now') WHERE id=?",v.title,v.description,v.visibility,liste.id);
+  res.json({collection:{...listeById(liste.id),mine:true}});
+});
+app.delete('/api/collections/:id',required,(req,res)=>{
+  const liste=listeById(numericId(req.params.id));
+  if(!liste)return fail(res,404,'Liste introuvable.');
+  if(liste.owner_id!==req.user.id)return fail(res,403,'Tu ne peux supprimer que tes listes.');
+  run('DELETE FROM collections WHERE id=?',liste.id);   // les produits rangés partent avec (CASCADE)
+  res.json({ok:true});
+});
+app.post('/api/collections/:id/items',required,(req,res)=>{
+  const liste=listeById(numericId(req.params.id));
+  if(!liste)return fail(res,404,'Liste introuvable.');
+  if(liste.owner_id!==req.user.id)return fail(res,403,'Tu ne peux modifier que tes listes.');
+  const productId=numericId(req.body.productId);
+  if(!productId||!get('SELECT id FROM products WHERE id=?',productId))return fail(res,404,'Produit introuvable.');
+  if(get('SELECT 1 AS present FROM collection_items WHERE collection_id=? AND product_id=?',liste.id,productId))return fail(res,409,'Ce produit est déjà dans cette liste.');
+  if(get('SELECT count(*) AS n FROM collection_items WHERE collection_id=?',liste.id).n>=PRODUITS_PAR_LISTE)return fail(res,400,`Cette liste est complète (${PRODUITS_PAR_LISTE} produits).`);
+  run('INSERT INTO collection_items(collection_id,product_id,position) VALUES(?,?,(SELECT COALESCE(MAX(position),0)+1 FROM collection_items WHERE collection_id=?))',liste.id,productId,liste.id);
+  res.status(201).json({ok:true,items_count:get('SELECT count(*) AS n FROM collection_items WHERE collection_id=?',liste.id).n});
+});
+app.delete('/api/collections/:id/items/:productId',required,(req,res)=>{
+  const liste=listeById(numericId(req.params.id));
+  if(!liste)return fail(res,404,'Liste introuvable.');
+  if(liste.owner_id!==req.user.id)return fail(res,403,'Tu ne peux modifier que tes listes.');
+  run('DELETE FROM collection_items WHERE collection_id=? AND product_id=?',liste.id,numericId(req.params.productId));
+  res.json({ok:true,items_count:get('SELECT count(*) AS n FROM collection_items WHERE collection_id=?',liste.id).n});
+});
 app.get('/api/notifications',required,(req,res)=>res.json({notifications:all('SELECT n.*,u.username AS actor_name,u.avatar AS actor_avatar FROM notifications n JOIN users u ON u.id=n.actor_id WHERE n.user_id=? ORDER BY n.id DESC LIMIT 50',req.user.id)}));
 app.post('/api/notifications/read',required,(req,res)=>{run('UPDATE notifications SET read=1 WHERE user_id=?',req.user.id);res.json({ok:true});});
 app.post('/api/posts/:id/report',required,(req,res)=>{const id=numericId(req.params.id),reason=text(req.body.reason,300);if(!get('SELECT id FROM posts WHERE id=? AND draft=0',id))return fail(res,404,'Publication introuvable.');if(reason.length<5)return fail(res,400,'Indique la raison du signalement.');run('INSERT OR IGNORE INTO reports(reporter_id,post_id,reason) VALUES(?,?,?)',req.user.id,id,reason);res.json({ok:true});});
@@ -110,20 +493,31 @@ app.use('/api',(req,res)=>fail(res,404,'Adresse introuvable.'));
 app.use((err,req,res,next)=>{console.error(err);if(err instanceof multer.MulterError)return fail(res,400,'Image trop volumineuse ou trop de fichiers (5 maximum, 8 Mo par image).');return fail(res,500,'Une erreur est survenue. Réessaie.');});
 if(existsSync(resolve('dist/index.html'))){
   app.use(express.static(resolve('dist')));
-  const html = readFileSync(resolve('dist/index.html'),'utf8');
+  // Le HTML est mis en cache, mais relu dès que le fichier change : après une
+  // nouvelle compilation, l'application sert tout de suite les bons fichiers
+  // (sinon le navigateur réclame des fichiers qui n'existent plus : page blanche).
+  let html = '', htmlModifie = 0;
+  const htmlCourant = () => { const chemin = resolve('dist/index.html'); const modifie = statSync(chemin).mtimeMs; if(modifie !== htmlModifie){ html = readFileSync(chemin,'utf8'); htmlModifie = modifie; } return html; };
   const escapeHtml = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   app.get('*',(req,res)=>{
     let title = 'Lynora — Ton style, ta communauté', description = 'Découvre des avis sincères et partage tes inspirations sur Lynora.', image = '/editorial-beauty.webp';
     const product = req.path.match(/^\/produit\/(\d+)$/);
     const post = req.path.match(/^\/publication\/(\d+)$/);
     const profile = req.path.match(/^\/profil\/(\d+)$/);
+    const collection = req.path.match(/^\/liste\/(\d+)$/);
     if(product){const p=get('SELECT name,brand,image FROM products WHERE id=?',Number(product[1]));if(p){title=`${p.name} · ${p.brand} | Lynora`;description=`Découvre les avis de la communauté sur ${p.name} par ${p.brand}.`;image=p.image||image;}}
-    if(post){const p=get('SELECT p.caption,p.draft,u.username,(SELECT url FROM post_media WHERE post_id=p.id ORDER BY position LIMIT 1) AS image FROM posts p JOIN users u ON u.id=p.author_id WHERE p.id=? AND p.draft=0',Number(post[1]));if(p){title=`Une publication de ${p.username} | Lynora`;description=p.caption.slice(0,180);image=p.image||image;}}
+    if(post){const p=get('SELECT p.caption,p.draft,u.username,(SELECT url FROM post_media WHERE post_id=p.id ORDER BY position LIMIT 1) AS image FROM posts p JOIN users u ON u.id=p.author_id WHERE p.id=? AND p.draft=0',Number(post[1]));if(p){title=`Une publication de ${p.username} | Lynora`;description=p.caption.slice(0,180);image=p.image||image;
+      // Pour un look, on annonce les pièces : l'aperçu du partage devient informatif.
+      const pieces=all('SELECT pr.name FROM post_products pp JOIN products pr ON pr.id=pp.product_id WHERE pp.post_id=? ORDER BY pp.position',Number(post[1])).map(r=>r.name);
+      if(pieces.length)description=`Un look en ${pieces.length} pièce${pieces.length>1?'s':''} : ${pieces.slice(0,4).join(', ')}${pieces.length>4?'…':''} — partagé par ${p.username} sur Lynora.`;}}
     if(profile){const u=get('SELECT username,bio,avatar FROM users WHERE id=?',Number(profile[1]));if(u){title=`${u.username} | Lynora`;description=u.bio||`Découvre le profil de ${u.username} sur Lynora.`;image=u.avatar||image;}}
+    // Liste partageable : aperçu attrayant (titre, auteur, première photo, nombre de produits).
+    // Seules les listes publiques sont exposées : une liste privée garde l'aperçu par défaut.
+    if(collection){const c=get("SELECT c.title,c.description,u.username,(SELECT count(*) FROM collection_items ci WHERE ci.collection_id=c.id) AS n,(SELECT pr.image FROM collection_items ci JOIN products pr ON pr.id=ci.product_id WHERE ci.collection_id=c.id AND pr.image IS NOT NULL ORDER BY ci.position,ci.added_at LIMIT 1) AS photo FROM collections c JOIN users u ON u.id=c.owner_id WHERE c.id=? AND c.visibility='public'",Number(collection[1]));if(c){title=`${c.title} · liste de ${c.username} | Lynora`;description=c.description||`${c.n} produit${c.n>1?'s':''} à découvrir, rangé${c.n>1?'s':''} par ${c.username} sur Lynora.`;image=c.photo||image;}}
     const protocol=req.get('x-forwarded-proto')||req.protocol;
     const origin=protocol+'://'+req.get('host');
     const tags=`<meta property="og:type" content="website"/><meta property="og:title" content="${escapeHtml(title)}"/><meta property="og:description" content="${escapeHtml(description)}"/><meta property="og:image" content="${escapeHtml(new URL(image,origin).href)}"/><meta property="og:url" content="${escapeHtml(new URL(req.originalUrl,origin).href)}"/><meta name="twitter:card" content="summary_large_image"/>`;
-    res.type('html').send(html.replace(/<title>.*?<\/title>/,`<title>${escapeHtml(title)}</title>`).replace(/<meta name="description"[^>]*\/>/,`<meta name="description" content="${escapeHtml(description)}"/>${tags}`));
+    res.type('html').send(htmlCourant().replace(/<title>.*?<\/title>/,`<title>${escapeHtml(title)}</title>`).replace(/<meta name="description"[^>]*\/>/,`<meta name="description" content="${escapeHtml(description)}"/>${tags}`));
   });
 }
 const port=Number(process.env.PORT)||3001;

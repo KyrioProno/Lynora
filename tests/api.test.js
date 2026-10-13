@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { criteresNotes, criteresTextes, groupesTextes, clesCriteres, declarations } from '../shared/criteres.js';
 import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,3 +21,518 @@ const feed=await request('/posts');assert.equal(feed.data.posts[0].likes_count,1
 const draft=await request('/posts',{method:'POST',cookie:a.cookie,body:{type:'look',category:'Mode',caption:'',media:[],draft:true}});assert.equal(draft.status,201);assert.equal((await request('/posts?drafts=1',{cookie:a.cookie})).data.posts.length,1);assert.equal((await request('/posts')).data.posts.length,1);assert.equal((await request('/posts/'+draft.data.post.id)).status,404);
 const login=await request('/auth/login',{method:'POST',body:{email:'a@example.fr',password:'un-mot-de-passe-solide'}});assert.equal(login.status,200);assert.equal(login.data.user.username,'Alice');await request('/auth/logout',{method:'POST',cookie:login.cookie});assert.equal((await request('/me',{cookie:login.cookie})).data.user,null);
 }finally{server.kill();rmSync(dir,{recursive:true,force:true})}});
+
+/* ============================================================
+   ÉTAPE « CRITÈRES PAR CATÉGORIE »
+   1) la table partagée shared/criteres.js contient bien ce que
+      demande le cahier des charges ;
+   2) le serveur n'accepte que les critères prévus pour la
+      catégorie du produit (liste blanche), et les déclarations
+      texte (type de peau, pointure, occasion) sont conservées.
+   ============================================================ */
+test('critères adaptés à chaque catégorie', () => {
+  // Maquillage : les 5 critères du cahier des charges, dans l'ordre
+  assert.deepEqual(criteresNotes('Maquillage').map(([cle]) => cle), ['quality', 'wear', 'application', 'result', 'value']);
+  // Soins / Cheveux / Hygiène : texture, résultats, tolérance, prix
+  for (const cat of ['Soins', 'Beauté', 'Cheveux', 'Hygiène'])
+    assert.deepEqual(criteresNotes(cat).map(([cle]) => cle), ['texture', 'result', 'tolerance', 'value'], cat);
+  // Vêtements et chaussures : coupe, matières, fidélité du rendu, prix
+  for (const cat of ['Mode', 'Chaussures & sacs'])
+    assert.deepEqual(criteresNotes(cat).map(([cle]) => cle), ['fit', 'quality', 'accuracy', 'value'], cat);
+  // Parfums : odeur, tenue, intensité, prix
+  assert.deepEqual(criteresNotes('Parfums').map(([cle]) => cle), ['scent', 'wear', 'intensity', 'value']);
+  // Le rapport qualité-prix est présent partout : c'est la base de « Est-ce que ça vaut son prix ? »
+  for (const cat of ['Maquillage', 'Soins', 'Mode', 'Chaussures & sacs', 'Parfums', 'Lifestyle'])
+    assert.ok(criteresNotes(cat).some(([cle]) => cle === 'value'), cat);
+
+  // Champs texte : type de peau pour les soins, pointures pour les vêtements, occasion pour les parfums
+  assert.deepEqual(criteresTextes('Soins').map(c => c.key), ['skin']);
+  assert.deepEqual(criteresTextes('Cheveux').map(c => c.key), ['hair']);
+  assert.deepEqual(criteresTextes('Mode').map(c => c.key), ['sizeUsual', 'sizeOrdered']);
+  assert.deepEqual(criteresTextes('Parfums').map(c => c.key), ['occasion']);
+  assert.deepEqual(criteresTextes('Lifestyle'), []);
+  // Les deux pointures s'affichent côte à côte, le type de peau tout seul
+  assert.deepEqual(groupesTextes('Mode').map(g => g.map(c => c.key)), [['sizeUsual', 'sizeOrdered']]);
+  assert.deepEqual(groupesTextes('Soins').map(g => g.length), [1]);
+  // Aucun champ texte oublié dans la liste blanche
+  assert.deepEqual(clesCriteres('Parfums').sort(), ['intensity', 'occasion', 'scent', 'value', 'wear']);
+
+  // Agrégation des déclarations : « mixte » et « Mixte » comptent ensemble
+  const avis = [
+    { criteria: { skin: 'mixte', value: 4 } },
+    { criteria: { skin: 'Mixte' } },
+    { criteria: { skin: 'sèche' } },
+    { criteria: { value: 5 } }
+  ];
+  assert.deepEqual(declarations(avis, 'Soins'), [{ key: 'skin', label: 'Type de peau', valeurs: [{ valeur: 'mixte', n: 2 }, { valeur: 'sèche', n: 1 }] }]);
+  assert.deepEqual(declarations(avis, 'Lifestyle'), []);
+});
+
+test('le serveur n’accepte que les critères prévus pour la catégorie', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-criteres-'));
+  const port = 41000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const compte = await requete('/auth/register', { method: 'POST', body: { email: 'parfum@example.fr', username: 'Iris', password: 'un-mot-de-passe-solide' } });
+    assert.equal(compte.status, 201);
+    const produit = await requete('/products', { method: 'POST', cookie: compte.cookie, body: { name: 'Eau de test', brand: 'Maison Test', category: 'Parfums', price: 89 } });
+    assert.equal(produit.status, 201);
+    const pid = produit.data.product.id;
+
+    // Critères envoyés : 3 valides pour un parfum, 1 clé d'une autre catégorie, 1 clé inventée
+    const avis = await requete('/posts', {
+      method: 'POST', cookie: compte.cookie,
+      body: {
+        type: 'avis', category: 'Parfums', caption: 'Une odeur boisée qui tient toute la journée, parfaite pour le travail.', productId: pid, rating: 5,
+        criteria: { scent: 5, wear: 4, intensity: 3, value: 4, occasion: '  tous les jours  ', texture: 5, critereInvente: 5 }
+      }
+    });
+    assert.equal(avis.status, 201, JSON.stringify(avis.data));
+    // Seuls scent, wear, intensity, value et occasion sont conservés ; le texte est nettoyé
+    assert.deepEqual(avis.data.post.criteria, { scent: 5, wear: 4, intensity: 3, value: 4, occasion: 'tous les jours' });
+
+    // La fiche produit agrège les notes réelles
+    const fiche = await requete('/products/' + pid);
+    assert.equal(fiche.data.product.avg_rating, 5);
+    assert.equal(fiche.data.product.value_rating, 4);
+    assert.deepEqual(fiche.data.reviews[0].criteria, { scent: 5, wear: 4, intensity: 3, value: 4, occasion: 'tous les jours' });
+    // Et les déclarations se retrouvent telles quelles pour la fiche
+    assert.deepEqual(declarations(fiche.data.reviews, 'Parfums'), [{ key: 'occasion', label: 'Occasion', valeurs: [{ valeur: 'tous les jours', n: 1 }] }]);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   LISTES PARTAGEABLES (Fonction 4)
+   Ce test vérifie ce qui pourrait faire mal : une liste privée
+   doit rester privée, et personne d'autre que son propriétaire
+   ne peut la modifier.
+   ============================================================ */
+test('listes partageables : visibilité, permissions et rangement', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-listes-'));
+  const port = 42000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'liste-a@example.fr', username: 'Alice', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'liste-b@example.fr', username: 'Brune', password: 'un-autre-mot-de-passe' } });
+    const produit = await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Crème test', brand: 'Maison Test', category: 'Soins', price: 18 } });
+    const pid = produit.data.product.id;
+    const autresProduits = [];
+    for (const nom of ['Baume test', 'Huile test']) autresProduits.push((await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: nom, brand: 'Maison Test', category: 'Soins' } })).data.product.id);
+
+    // 1. Création d'une liste privée par Brune
+    const creation = await requete('/collections', { method: 'POST', cookie: b.cookie, body: { title: 'Ma routine du soir', description: 'Mes essentiels avant de dormir.', visibility: 'private' } });
+    assert.equal(creation.status, 201);
+    const liste = creation.data.collection.id;
+    assert.equal(creation.data.collection.items_count, 0);
+    assert.deepEqual(creation.data.collection.covers, []);
+    // Titre trop court : refusé
+    assert.equal((await requete('/collections', { method: 'POST', cookie: b.cookie, body: { title: 'x' } })).status, 400);
+    // Sans compte : refusé
+    assert.equal((await requete('/collections', { method: 'POST', body: { title: 'Sans compte' } })).status, 401);
+
+    // 2. La liste privée reste privée : ni l'invité, ni Alice ne la voient
+    assert.equal((await requete('/collections/' + liste)).status, 403);
+    assert.equal((await requete('/collections/' + liste, { cookie: a.cookie })).status, 403);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections.length, 0);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: b.cookie })).data.collections.length, 1);
+
+    // 3. Rangement du produit, et refus du doublon
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: pid } })).status, 201);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: pid } })).status, 409);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: 9999 } })).status, 404);
+
+    // 4. Alice ne peut rien modifier chez Brune
+    assert.equal((await requete('/collections/' + liste, { method: 'PATCH', cookie: a.cookie, body: { title: 'Détournement' } })).status, 403);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: a.cookie, body: { productId: autresProduits[0] } })).status, 403);
+    assert.equal((await requete('/collections/' + liste, { method: 'DELETE', cookie: a.cookie })).status, 403);
+
+    // 5. Brune publie la liste : tout le monde peut la lire, avec la note réelle des produits
+    await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'avis', category: 'Soins', caption: 'Une crème très agréable, la peau est souple au réveil.', productId: pid, rating: 5, criteria: { texture: 5, value: 4 } } });
+    await requete('/collections/' + liste, { method: 'PATCH', cookie: b.cookie, body: { title: 'Ma routine du soir', description: 'Mes essentiels avant de dormir.', visibility: 'public' } });
+    const vueInvite = await requete('/collections/' + liste);
+    assert.equal(vueInvite.status, 200);
+    assert.equal(vueInvite.data.collection.items_count, 1);
+    assert.equal(vueInvite.data.collection.owner_id, b.data.user.id);
+    assert.equal(vueInvite.data.collection.mine, false);
+    assert.equal(vueInvite.data.products[0].id, pid);
+    assert.equal(vueInvite.data.products[0].avg_rating, 5);
+    assert.equal(vueInvite.data.products[0].review_count, 1);
+    const vueProprietaire = await requete('/collections/' + liste, { cookie: b.cookie });
+    assert.equal(vueProprietaire.data.collection.mine, true);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections[0].items_count, 1);
+    // La vignette de couverture vient de la première photo réelle du produit (ici aucune) : la liste reste valide
+    assert.deepEqual((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections[0].covers, []);
+
+    // 6. L'écran d'ajout sait si le produit est déjà rangé
+    const mesListes = await requete('/me/collections?productId=' + pid, { cookie: b.cookie });
+    assert.equal(mesListes.data.collections[0].has_product, true);
+    assert.equal((await requete('/me/collections?productId=' + autresProduits[0], { cookie: b.cookie })).data.collections[0].has_product, false);
+
+    // 7. Retrait du produit, puis suppression de la liste
+    const retrait = await requete('/collections/' + liste + '/items/' + pid, { method: 'DELETE', cookie: b.cookie });
+    assert.equal(retrait.data.items_count, 0);
+    assert.equal((await requete('/collections/' + liste)).data.products.length, 0);
+    assert.equal((await requete('/collections/' + liste, { method: 'DELETE', cookie: b.cookie })).status, 200);
+    assert.equal((await requete('/collections/' + liste)).status, 404);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: b.cookie })).data.collections.length, 0);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   LES PIÈCES D'UN LOOK (Fonction 2)
+   Un look rassemble plusieurs produits, de catégories différentes.
+   Ce test vérifie ce qui doit rester vrai : les pièces sont bien
+   enregistrées dans l'ordre, une comparaison exige deux produits,
+   une pièce inventée est refusée, et la fiche produit retrouve les
+   looks qui l'utilisent.
+   ============================================================ */
+test('les pièces d’un look : composition, ordre et limites', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-looks-'));
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'look-a@example.fr', username: 'Lina', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'look-b@example.fr', username: 'Noa', password: 'un-autre-mot-de-passe' } });
+    // Une pièce de chaque univers : sac, chaussures, maquillage et parfum.
+    const sac = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Cabas en cuir', brand: 'Maison Test', category: 'Mode', price: 120 } })).data.product.id;
+    const baskets = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Baskets blanches', brand: 'Maison Test', category: 'Chaussures & sacs', price: 75 } })).data.product.id;
+    const rouge = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Rouge à lèvres mat', brand: 'Atelier Test', category: 'Maquillage', price: 22 } })).data.product.id;
+
+    // 1. Un look avec quatre pièces, dans un ordre précis
+    const look = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma tenue du jour : un cabas, des baskets, un rouge à lèvres et mon parfum préféré.', productIds: [sac, baskets, rouge, sac] } });
+    assert.equal(look.status, 201, JSON.stringify(look.data));
+    assert.deepEqual(look.data.post.pieces.map(x => x.id), [sac, baskets, rouge]);   // doublon ignoré, ordre conservé
+    assert.deepEqual(look.data.post.pieces.map(x => x.category), ['Mode', 'Chaussures & sacs', 'Maquillage']);
+    assert.equal(look.data.post.pieces[0].name, 'Cabas en cuir');
+
+    // 2. Un avis ne prend pas de pièces : il garde son produit noté
+    const avis = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'avis', category: 'Maquillage', caption: 'Une couleur intense qui tient bien la journée.', productId: rouge, rating: 5, productIds: [sac, baskets] } });
+    assert.equal(avis.status, 201);
+    assert.deepEqual(avis.data.post.pieces, []);
+    assert.equal(avis.data.post.product_id, rouge);
+
+    // 3. Une comparaison demande au moins deux produits
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'comparaison', category: 'Mode', caption: 'Les deux sacs comparés un par un.', productIds: [sac] } })).status, 400);
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'comparaison', category: 'Mode', caption: 'Les deux sacs comparés un par un.', productIds: [sac, baskets] } })).status, 201);
+
+    // 4. Un look sans pièce est refusé, et une pièce inventée aussi
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look sans aucune pièce à montrer.' } })).status, 400);
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look avec une pièce qui n’existe pas.', productIds: [9999] } })).status, 404);
+    // Un brouillon reste enregistrable incomplet : on peut ranger son idée et la finir plus tard
+    const brouillon = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: '', draft: true, productIds: [sac] } });
+    assert.equal(brouillon.status, 201);
+    assert.equal(brouillon.data.post.draft, true);
+
+    // 5. La fiche produit retrouve les looks qui l'utilisent
+    // Le sac apparaît dans le look ET dans la comparaison : deux publications.
+    const fiche = await requete('/products/' + sac);
+    assert.equal(fiche.data.looks.length, 2);
+    assert.ok(fiche.data.looks.some(l => l.id === look.data.post.id));
+    const publication = fiche.data.looks.find(l => l.id === look.data.post.id);
+    assert.equal(publication.username, 'Lina');
+    assert.equal(publication.pieces.length, 3);
+    assert.equal((await requete('/products/' + rouge)).data.looks.length, 1);      // seulement le look (l'avis ne compte pas)
+    assert.equal((await requete('/products/' + baskets)).data.looks.length, 2);   // le look et la comparaison
+
+    // 6. Modifier le look remplace vraiment ses pièces
+    const modif = await requete('/posts/' + look.data.post.id, { method: 'PATCH', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma tenue du jour, version soirée avec seulement deux pièces.', productIds: [rouge, sac] } });
+    assert.equal(modif.status, 200);
+    assert.deepEqual(modif.data.post.pieces.map(x => x.id), [rouge, sac]);
+    assert.equal((await requete('/products/' + baskets)).data.looks.length, 1);   // la comparaison, plus le look
+
+    // 7. Personne d'autre ne peut modifier ce look
+    assert.equal((await requete('/posts/' + look.data.post.id, { method: 'PATCH', cookie: b.cookie, body: { type: 'look', category: 'Mode', caption: 'Je modifie le look de quelqu’un d’autre.', productIds: [baskets] } })).status, 403);
+    // Et un look d'autrui reste visible : c'est le principe du partage
+    assert.equal((await requete('/posts/' + look.data.post.id, { cookie: b.cookie })).status, 200);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   DÉFIS COMMUNAUTAIRES (Fonction 3)
+   Ce test vérifie les règles qui protègent l'honnêteté du jeu :
+   une participation par personne, un vote par personne, pas de
+   vote pour soi-même, rien après la date de fin, et des compteurs
+   qui correspondent aux vraies participations.
+   ============================================================ */
+test('défis communautaires : participations, votes et fins de défi', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-defis-'));
+  const port = 44000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'defi-a@example.fr', username: 'Maya', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'defi-b@example.fr', username: 'Sami', password: 'un-autre-mot-de-passe' } });
+    const c = await requete('/auth/register', { method: 'POST', body: { email: 'defi-c@example.fr', username: 'Lou', password: 'un-troisieme-mot-de-passe' } });
+    const produit = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Rouge mat', brand: 'Atelier Test', category: 'Maquillage', price: 22 } })).data.product.id;
+
+    // 1. Proposer un défi : titre et règle du jeu obligatoires
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'abc', brief: 'Trop court' } })).status, 400);
+    assert.equal((await requete('/challenges', { method: 'POST', body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum.' } })).status, 401);
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum.', category: 'Mode', budget: -5 } })).status, 400);
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look avec 50 € maximum.', category: 'Mode', endsAt: '2020-01-01' } })).status, 400);
+    const creation = await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum, tout est permis sauf dépasser.', category: 'Mode', budget: 50, votesAllowed: true, endsAt: '2099-12-31' } });
+    assert.equal(creation.status, 201, JSON.stringify(creation.data));
+    const defi = creation.data.challenge.id;
+    assert.equal(creation.data.challenge.entries_count, 0);
+    assert.equal(creation.data.challenge.votes_count, 0);
+    assert.equal(creation.data.challenge.votes_allowed, 1);
+
+    // 2. Chacun prépare une création, puis participe
+    const lookMaya = (await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Mon look à moins de cinquante euros, tout en seconde main.', productIds: [produit] } })).data.post;
+    const lookSami = (await requete('/posts', { method: 'POST', cookie: b.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look très simple avec trois pièces que j’avais déjà.', productIds: [produit] } })).data.post;
+    const lookLou = (await requete('/posts', { method: 'POST', cookie: c.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma proposition colorée pour ce défi à petit budget.', productIds: [produit] } })).data.post;
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: a.cookie, body: { postId: lookMaya.id } })).status, 201);
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookSami.id } })).status, 201);
+    // Sami ne peut pas participer deux fois, ni présenter la publication d'une autre personne
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookLou.id } })).status, 403);
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookSami.id } })).status, 409);
+    // Un brouillon ne peut pas concourir
+    const brouillon = (await requete('/posts', { method: 'POST', cookie: c.cookie, body: { type: 'look', category: 'Mode', caption: '', productIds: [produit], draft: true } })).data.post;
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: brouillon.id } })).status, 404);
+
+    // 3. Votes : pas pour soi-même, un seul vote par personne, déplaçable
+    assert.equal((await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: a.cookie, body: { postId: lookMaya.id } })).status, 400);  // soi-même
+    assert.equal((await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 404);    // pas une participation
+    const voteLou = await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookMaya.id } });
+    assert.equal(voteLou.status, 200);
+    assert.equal(voteLou.data.votes_count, 1);
+    const voteLouAilleurs = await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookSami.id } });
+    assert.equal(voteLouAilleurs.data.votes_count, 1);   // son vote s'est déplacé
+    assert.equal(voteLouAilleurs.data.my_vote, lookSami.id);
+
+    // 4. Le défi affiche des compteurs réels et un classement
+    const vue = await requete('/challenges/' + defi, { cookie: a.cookie });
+    assert.equal(vue.data.challenge.entries_count, 2);
+    assert.equal(vue.data.challenge.votes_count, 1);
+    assert.equal(vue.data.entries[0].id, lookSami.id);                       // celui qui a un vote est en tête
+    assert.equal(vue.data.entries[0].votes_count, 1);
+    assert.equal(vue.data.entries[1].votes_count, 0);
+    assert.equal(vue.data.entries.find(e => e.id === lookMaya.id).mine, true);
+    // Budget : le total estimé vient des prix réellement renseignés des pièces
+    assert.equal(vue.data.entries[0].estimated_total, 22);
+    assert.equal(vue.data.entries[0].pieces_without_price, 0);
+    // La publication affiche qu'elle participe au défi
+    assert.equal((await requete('/posts/' + lookMaya.id)).data.post.challenge_id, defi);
+    assert.equal((await requete('/posts/' + lookMaya.id)).data.post.challenge_title, 'Un look à 50 €');
+    // La personne qui a proposé le défi a reçu une notification de participation
+    assert.ok((await requete('/notifications', { cookie: a.cookie })).data.notifications.some(n => n.kind === 'challenge_entry'));
+
+    // 5. Défi sans vote : le vote est refusé proprement
+    const sansVote = (await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Ta routine du matin', brief: 'Montre ta routine, sans vote cette fois.', category: 'Soins', votesAllowed: false } })).data.challenge;
+    assert.equal(sansVote.votes_allowed, 0);
+    assert.equal((await requete('/challenges/' + sansVote.id + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 201);
+    assert.equal((await requete('/challenges/' + sansVote.id + '/votes', { method: 'POST', cookie: a.cookie, body: { postId: lookLou.id } })).status, 400);
+
+    // 6. Défi terminé (date passée) : plus de participation, plus de vote
+    const passe = (await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Défi du mois dernier', brief: 'Ce défi est déjà terminé depuis longtemps.', category: 'Mode', endsAt: '2099-12-30' } })).data.challenge;
+    // On rend le défi « déjà terminé » en écrivant une date passée directement
+    // dans le fichier SQLite du serveur de test (aucune route technique en production).
+    const baseDeTest = new DatabaseSync(join(dossier, 'lynora.sqlite'));
+    baseDeTest.prepare("UPDATE challenges SET ends_at='2020-01-01 00:00:00' WHERE id=?").run(passe.id);
+    baseDeTest.close();
+    assert.equal((await requete('/challenges/' + passe.id + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 400);
+    assert.equal((await requete('/challenges/' + passe.id + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 400);
+    assert.equal((await requete('/challenges?status=past')).data.challenges.some(x => x.id === passe.id), true);
+    assert.equal((await requete('/challenges?status=open')).data.challenges.some(x => x.id === passe.id), false);
+
+    // 7. Retirer sa participation emporte ses votes
+    const retrait = await requete('/challenges/' + defi + '/entries', { method: 'DELETE', cookie: b.cookie });
+    assert.equal(retrait.status, 200);
+    assert.equal((await requete('/challenges/' + defi)).data.challenge.entries_count, 1);
+    assert.equal((await requete('/challenges/' + defi)).data.challenge.votes_count, 0);
+
+    // 8. Suppression du défi par une autre personne : refusée
+    assert.equal((await requete('/challenges/' + defi, { method: 'DELETE', cookie: b.cookie })).status, 403);
+    assert.equal((await requete('/challenges/' + defi, { method: 'DELETE', cookie: a.cookie })).status, 200);
+    assert.equal((await requete('/challenges/' + defi)).status, 404);
+    // Les publications des participants existent toujours : le défi disparaît, pas les créations
+    assert.equal((await requete('/posts/' + lookMaya.id)).status, 200);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   MODÉRATION (sécurité de la communauté)
+   Ce test vérifie la promesse la plus importante : une personne
+   ordinaire ne peut pas se donner les droits de modération, un
+   contenu masqué disparaît partout où il était visible, et son
+   auteur est prévenu. Il vérifie aussi qu'on peut rétablir.
+   ============================================================ */
+test('modération : signaler, masquer, rétablir, et pas d’auto-promotion', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-modo-'));
+  const port = 45000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  // Le rôle de modérateur vient d'une variable d'environnement du serveur,
+  // jamais de l'application : c'est ce que l'on vérifie ici.
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port), LYNORA_MODERATORS: 'modo@example.fr' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const modo = await requete('/auth/register', { method: 'POST', body: { email: 'modo@example.fr', username: 'Romy', password: 'un-mot-de-passe-solide' } });
+    const membre = await requete('/auth/register', { method: 'POST', body: { email: 'membre@example.fr', username: 'Théo', password: 'un-autre-mot-de-passe' } });
+    const autre = await requete('/auth/register', { method: 'POST', body: { email: 'autre@example.fr', username: 'Nina', password: 'un-troisieme-mot-de-passe' } });
+
+    // 1. Le rôle vient du serveur : le compte de la liste est modérateur, pas les autres
+    assert.equal(modo.data.user.role, 'moderator');
+    assert.equal(membre.data.user.role, 'member');
+    // Et personne ne peut se promouvoir soi-même en modifiant son profil
+    await requete('/me', { method: 'PATCH', cookie: membre.cookie, body: { username: 'Théo', bio: '', interests: [], favoritesPublic: false, role: 'moderator' } });
+    assert.equal((await requete('/me', { cookie: membre.cookie })).data.user.role, 'member');
+
+    // 2. Un membre ne peut pas ouvrir la console de modération
+    assert.equal((await requete('/moderation/reports', { cookie: membre.cookie })).status, 403);
+    assert.equal((await requete('/moderation/reports')).status, 401);
+    assert.equal((await requete('/moderation/hidden', { cookie: membre.cookie })).status, 403);
+
+    // 3. Une publication est signalée par une personne, puis la console l'affiche
+    const produit = (await requete('/products', { method: 'POST', cookie: membre.cookie, body: { name: 'Crème litigieuse', brand: 'Maison Test', category: 'Soins', price: 30 } })).data.product.id;
+    const publication = (await requete('/posts', { method: 'POST', cookie: membre.cookie, body: { type: 'avis', category: 'Soins', caption: 'Un avis que d’autres personnes jugent inapproprié, paraît-il.', productId: produit, rating: 2, criteria: { value: 2 } } })).data.post;
+    // Un membre ne peut pas masquer un contenu
+    assert.equal((await requete('/moderation/posts/' + publication.id + '/visibility', { method: 'POST', cookie: membre.cookie, body: {} })).status, 403);
+    await requete('/posts/' + publication.id + '/report', { method: 'POST', cookie: autre.cookie, body: { reason: 'Ce contenu me semble inapproprié.' } });
+    const file = await requete('/moderation/reports?status=open', { cookie: modo.cookie });
+    assert.equal(file.status, 200);
+    assert.equal(file.data.open_count, 1);
+    assert.equal(file.data.reports[0].post_id, publication.id);
+    assert.equal(file.data.reports[0].author_name, 'Théo');
+    assert.equal(file.data.reports[0].reporter_name, 'Nina');
+    assert.equal(file.data.reports[0].hidden, 0);
+    assert.equal(file.data.waiting, true);   // le serveur indique qu'une liste de modérateurs est configurée
+
+    // 4. Masquer : le contenu disparaît partout, l'auteur est prévenu
+    const decision = await requete('/moderation/reports/' + file.data.reports[0].id, { method: 'POST', cookie: modo.cookie, body: { action: 'hide' } });
+    assert.equal(decision.status, 200);
+    assert.equal(decision.data.hidden, true);
+    assert.equal(decision.data.open_count, 0);
+    assert.equal((await requete('/posts')).data.posts.some(p => p.id === publication.id), false);                    // fil
+    assert.equal((await requete('/posts?author=' + membre.data.user.id)).data.posts.length, 0);                       // profil
+    assert.equal((await requete('/products/' + produit)).data.reviews.length, 0);                                    // fiche produit
+    assert.equal((await requete('/products/' + produit)).data.product.review_count, 0);                              // et la note ne compte plus cet avis
+    assert.equal((await requete('/posts/' + publication.id, { cookie: autre.cookie })).status, 404);                 // invisible pour les autres
+    const vuParLAuteur = await requete('/posts/' + publication.id, { cookie: membre.cookie });
+    assert.equal(vuParLAuteur.status, 200);                                                                          // l'auteur garde l'accès
+    assert.equal(vuParLAuteur.data.post.hidden, 1);
+    assert.equal((await requete('/posts/' + publication.id, { cookie: modo.cookie })).status, 200);                  // et la modération aussi
+    const notifications = (await requete('/notifications', { cookie: membre.cookie })).data.notifications;
+    assert.ok(notifications.some(n => n.kind === 'moderation'), 'l’auteur doit être prévenu du masquage');
+
+    // 5. Le signalement est classé, plus rien en attente
+    const classe = await requete('/moderation/reports?status=resolved', { cookie: modo.cookie });
+    assert.equal(classe.data.reports[0].action, 'hide');
+    assert.equal(classe.data.reports[0].resolved_by_name, 'Romy');
+    assert.ok(classe.data.reports[0].resolved_at);
+
+    // 6. Classer sans suite : le contenu reste en ligne, la personne qui a signalé est prévenue
+    const deuxieme = (await requete('/posts', { method: 'POST', cookie: autre.cookie, body: { type: 'conseil', category: 'Beauté', caption: 'Un conseil tout à fait acceptable, mais signalé par prudence.' } })).data.post;
+    await requete('/posts/' + deuxieme.id + '/report', { method: 'POST', cookie: membre.cookie, body: { reason: 'Je me demande si c’est autorisé.' } });
+    const aTraiter = (await requete('/moderation/reports?status=open', { cookie: modo.cookie })).data.reports[0];
+    const sansSuite = await requete('/moderation/reports/' + aTraiter.id, { method: 'POST', cookie: modo.cookie, body: { action: 'dismiss' } });
+    assert.equal(sansSuite.data.hidden, false);
+    assert.equal((await requete('/posts/' + deuxieme.id)).status, 200);
+    assert.ok((await requete('/notifications', { cookie: membre.cookie })).data.notifications.some(n => n.kind === 'report_resolved'), 'la personne qui a signalé doit être prévenue');
+
+    // 7. Les contenus masqués sont listés, et on peut rétablir
+    const masques = await requete('/moderation/hidden', { cookie: modo.cookie });
+    assert.equal(masques.data.hidden_total, 1);
+    assert.equal(masques.data.posts[0].id, publication.id);
+    assert.equal((await requete('/moderation/posts/' + publication.id + '/visibility', { method: 'POST', cookie: modo.cookie, body: { hidden: false } })).data.hidden, false);
+    assert.equal((await requete('/posts')).data.posts.some(p => p.id === publication.id), true);                      // de retour dans le fil
+    assert.equal((await requete('/products/' + produit)).data.product.review_count, 1);                               // et dans la note du produit
+    assert.ok((await requete('/notifications', { cookie: membre.cookie })).data.notifications.some(n => n.kind === 'moderation_restore'));
+
+    // 8. Une action inconnue est refusée proprement
+    const nouveauSignalement = (await requete('/moderation/reports?status=resolved', { cookie: modo.cookie })).data.reports[0];
+    assert.equal((await requete('/moderation/reports/' + nouveauSignalement.id, { method: 'POST', cookie: modo.cookie, body: { action: 'supprimer-tout' } })).status, 400);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   ACCÈS PRIVÉ (facultatif)
+   Le serveur démarre ici avec un code (LYNORA_ACCESS_CODE) : plus
+   rien ne doit sortir — ni publications, ni comptes, ni photos —
+   avant que le code ait été saisi. C'est ce que vérifie ce test.
+   ============================================================ */
+test('accès privé : rien ne sort sans le code, et le code ouvre l’accès', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-acces-'));
+  const port = 46000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}`;
+  const code = 'le-code-privé-de-test-2026';
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port), LYNORA_ACCESS_CODE: code }, stdio: ['ignore', 'pipe', 'pipe'] });
+  serveur.stderr.on('data', d => process.stderr.write(d));
+  serveur.stdout.on('data', d => process.stderr.write(d));
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json().catch(() => ({})), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/api/access')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+
+    // 1. Sans code : l'application annonce qu'elle est réservée, et l'API ne répond rien
+    const etat = await requete('/api/access');
+    assert.deepEqual({ needed: etat.data.needed, ok: etat.data.ok }, { needed: true, ok: false });
+    for (const chemin of ['/api/posts', '/api/me', '/api/products', '/api/notifications', '/api/challenges', '/api/moderation/reports']) {
+      const refus = await requete(chemin, { cookie: '' });
+      assert.equal(refus.status, 401, chemin + ' doit être fermé sans code');
+      assert.equal(refus.data.access, true);
+    }
+    // 2. La page d'accueil reste servie (c'est l'écran de code qui s'affiche)
+    assert.equal((await fetch(base + '/accueil')).status, 200);
+    // 3. Impossible de contourner en se connectant : même l'authentification est fermée
+    assert.equal((await requete('/api/auth/login', { method: 'POST', body: { email: 'quiconque@example.fr', password: 'un-mot-de-passe' } })).status, 401);
+    assert.equal((await requete('/api/auth/register', { method: 'POST', body: { email: 'quiconque@example.fr', username: 'Quelqu’un', password: 'un-mot-de-passe' } })).status, 401);
+    // 4. Un code faux est refusé, sans cookie
+    const faux = await requete('/api/access', { method: 'POST', body: { code: 'code-au-hasard' } });
+    assert.equal(faux.status, 401);
+    assert.equal(faux.cookie, undefined);
+    // 5. Le bon code ouvre l'accès, et le cookie suffit ensuite
+    const bon = await requete('/api/access', { method: 'POST', body: { code } });
+    assert.equal(bon.status, 200);
+    assert.ok(bon.cookie?.startsWith('lynora_acces='), 'le cookie d’accès doit être posé');
+    assert.equal((await requete('/api/posts', { cookie: bon.cookie })).status, 200);
+    assert.equal((await requete('/api/access', { cookie: bon.cookie })).data.ok, true);
+    // 6. Avec l'accès, l'application fonctionne normalement (compte de test créé puis publication)
+    const inscription = await requete('/api/auth/register', { method: 'POST', cookie: bon.cookie, body: { email: 'prive@example.fr', username: 'Privé', password: 'un-mot-de-passe-solide' } });
+    assert.equal(inscription.status, 201);
+    assert.equal(inscription.data.user.role, 'member');
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});

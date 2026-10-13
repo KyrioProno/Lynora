@@ -19,3 +19,224 @@
 .activity-list{margin-top:14px}.activity-row{padding:14px}.activity-row.unread{border-color:#9a6488;background:#342537}.activity-row>span{font-size:12px;line-height:1.45}.activity-row>span strong{display:inline}.settings-page form{display:flex;flex-direction:column;gap:16px}.settings-avatar{display:flex;align-items:center;gap:18px;margin:2px 0 8px}.settings-avatar label{position:relative;display:flex;align-items:center;gap:8px;border:1px solid #68516a;border-radius:100px;padding:10px 12px;color:#efc0dc;font-size:11px;cursor:pointer}.interest-grid{display:flex;gap:7px;flex-wrap:wrap}.settings-switch{display:flex;justify-content:space-between;align-items:center;gap:20px;border-top:1px solid #403541;padding:17px 0}.settings-switch div{display:flex;flex-direction:column;gap:5px}.settings-switch strong{font-size:12px}.settings-switch span{font-size:10px;color:var(--muted);line-height:1.4}.settings-switch input{appearance:none;flex:none;width:38px;height:23px;border-radius:100px;background:#554858;position:relative;cursor:pointer}.settings-switch input:after{content:"";position:absolute;width:17px;height:17px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}.settings-switch input:checked{background:#de9ec9}.settings-switch input:checked:after{left:18px}.logout-button{display:flex;align-items:center;gap:10px;color:#f0b8d9;background:none;border:0;padding:21px 0;font-size:12px;margin-top:21px}.settings-note{color:var(--muted);font-size:11px;line-height:1.5;border-top:1px solid #403541;padding-top:18px}
 @media(min-width:850px){body{background:radial-gradient(ellipse at 8% 42%,#382339 0%,transparent 34%),radial-gradient(ellipse at 88% 70%,#26222d 0%,transparent 32%),#0d0c12}.desktop-aside{display:flex;position:fixed;top:50%;left:max(5%,calc(50% - 590px));transform:translateY(-50%);flex-direction:column;align-items:flex-start;z-index:0}.desktop-aside .brand{align-items:flex-start}.desktop-aside .brand svg{margin-left:34px}.desktop-aside .brand span{font-size:43px}.desktop-aside p{font:normal 48px/1.05 Georgia,serif;letter-spacing:-.065em;margin:30px 0}.desktop-aside em{color:#ebb3d8}.aside-line{width:55px;height:1px;background:#c691b4;margin-bottom:18px}.desktop-aside>span{font-size:12px;letter-spacing:.17em;color:#b4a2b3;text-transform:uppercase}.app-shell{border-left:1px solid #504257;border-right:1px solid #504257}}
 @media(max-width:370px){.page-padding{padding:0 17px}.category-rail{padding-left:17px}.hero-overlay h2{font-size:30px}.product-buttons{flex-direction:column}.product-buttons .button{min-height:40px}.criterion>span{max-width:100px}.criterion button{width:25px}.profile-tabs{margin-left:-17px;margin-right:-17px;padding-left:17px}}
+/* Déclarations de la communauté (type de peau, pointures, occasions) */
+.declarations{display:flex;flex-direction:column;gap:9px;margin:4px 0 18px;padding:14px 15px;border:1px solid #403340;border-radius:15px;background:#211b26}
+.declarations p{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.declarations strong{color:#efe4ec;font-size:11px;font-weight:650}
+.declaration-tag{display:inline-flex;align-items:center;gap:5px;border:1px solid #694964;border-radius:100px;background:#dca4cc1c;color:#efc2df;font-size:10.5px;font-weight:650;padding:5px 10px}
+.declaration-tag small{color:#c9a2bd;font-size:9.5px;font-weight:600}
+/* ============================================================
+   Listes partageables (Fonction 4)
+   ============================================================ */
+/* La feuille qui s'ouvre depuis une fiche produit */
+.sheet{position:relative;background:#17141d;border:1px solid #644761;border-radius:25px;width:min(100%,440px);max-height:88dvh;overflow-y:auto;padding:20px 20px 22px;box-shadow:0 24px 90px #000b;align-self:flex-end}
+.sheet-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
+.sheet-head h2{font-family:Georgia,serif;font-weight:400;font-size:22px;margin:5px 0 2px}
+.sheet-head p{font-size:12px;margin:0}
+.sheet-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.sheet-row{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;text-align:left;background:#241f2b;border:1px solid #463a48;border-radius:14px;color:#f2e9f0;padding:10px 14px}
+.sheet-row.checked{border-color:#ecb3d8;background:#3a2a3a}
+.sheet-row:active{transform:scale(.985)}
+.sheet-row-text{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.sheet-row-text strong{font-size:13px}
+.sheet-row-text small{color:var(--muted);font-size:11px}
+.sheet-row svg{color:var(--pink);flex:none}
+.sheet-new{border-top:1px solid #3b3140;padding-top:16px}
+.sheet-new .button{width:100%;margin-top:10px}
+.idea-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}
+.idea-chips button{border:1px solid #534353;background:#27202b;border-radius:100px;color:#ddd1de;padding:9px 12px;font-size:11px}
+.idea-chips button:active{border-color:#ecb3d8}
+/* Formulaire de création (profil) */
+.list-create{background:#211b26;border:1px solid #403340;border-radius:16px;padding:15px;margin-bottom:16px}
+.list-create .button{flex:1}
+/* Grille des listes (profil) */
+.collection-grid{display:flex;flex-direction:column;gap:10px}
+.collection-card{display:flex;align-items:center;gap:13px;width:100%;text-align:left;background:#1f1a24;border:1px solid #3b3140;border-radius:16px;padding:11px;color:#f4ecf2}
+.collection-card:active{transform:scale(.99)}
+.collection-covers{display:flex;gap:2px;flex:none}
+.collection-covers img,.collection-covers .media-placeholder{width:42px;height:42px;border-radius:10px;object-fit:cover;background:#2b2330;display:grid;place-items:center;color:#e6a9d0}
+.collection-cover-empty{width:42px;height:42px;border-radius:10px;background:#2b2330;display:grid;place-items:center;color:#e6a9d0}
+.collection-meta{display:flex;flex-direction:column;gap:4px;min-width:0}
+.collection-meta strong{font-size:13px;overflow-wrap:anywhere}
+.collection-meta small{color:var(--muted);font-size:11px}
+/* La page d'une liste */
+.collection-head{margin:6px 0 22px}
+.collection-head h1{font-family:Georgia,serif;font-weight:400;font-size:31px;line-height:1.12;margin:8px 0 10px;letter-spacing:-.045em}
+.collection-owner{display:inline-flex;align-items:center;gap:8px;background:none;border:0;color:#e9d9e4;font-size:12px;padding:4px 0}
+.collection-owner strong{color:#f7dff0}
+.collection-owner svg{color:var(--muted)}
+.collection-description{font-size:13px;line-height:1.55;color:#ddd2de;margin:12px 0 0}
+.collection-count{margin:10px 0 0;font-size:12px}
+.collection-actions{display:flex;gap:9px;margin-top:16px}
+.collection-actions .button{flex:1;min-height:44px}
+.collection-edit{display:flex;flex-direction:column;gap:13px}
+.collection-edit-actions{display:flex;gap:9px;margin-top:4px}
+.collection-edit-actions .button{flex:1}
+.collection-item{display:flex;align-items:center;gap:8px}
+.collection-item .product-row{flex:1;min-width:0}
+.collection-note{display:inline-flex;align-items:center;gap:4px;color:#e9b0d1;font-size:12px;font-weight:650}
+.collection-note small{color:var(--muted);font-weight:500;font-size:10px}
+.collection-remove{flex:none;width:44px;height:44px;border-radius:50%;border:1px solid #4d4050;background:#241d28;color:#e8b7d5;display:grid;place-items:center}
+.collection-remove:active{border-color:#ecb3d8}
+/* La note d'un produit dans une liste doit rester sur une seule ligne
+   (la règle générale des lignes produit force l'affichage en colonne). */
+.product-row .collection-note{display:inline-flex;flex-direction:row;align-items:center;gap:4px;white-space:nowrap;flex:none}
+/* ============================================================
+   Les pièces d'un look (Fonction 2)
+   ============================================================ */
+/* Composeur, dans l'écran de création */
+.pieces-picker{margin-top:17px;padding-top:16px;border-top:1px solid #3b3140}
+.pieces-picker .search-box{margin:10px 0}
+.pieces-list{list-style:none;display:flex;flex-direction:column;gap:8px;margin:12px 0 0}
+.piece-chip{display:flex;align-items:center;gap:11px;background:#241f2b;border:1px solid #463a48;border-radius:14px;padding:8px}
+.piece-chip img,.piece-chip .media-placeholder{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none;background:#2b2330}
+.piece-chip>span{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.piece-chip small{color:var(--pink);font-size:10px;letter-spacing:.04em}
+.piece-chip strong{font-size:12.5px;overflow-wrap:anywhere}
+.piece-chip>button{flex:none;width:38px;height:38px;border-radius:50%;border:1px solid #4d4050;background:#1e1922;color:#e8b7d5;display:grid;place-items:center}
+/* La liste des pièces sur la page d'une publication */
+.pieces-section{margin:26px 0 22px}
+.pieces-look{display:flex;flex-direction:column;gap:9px;margin-top:14px}
+.piece-card{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#211b26;border:1px solid #403340;border-radius:15px;padding:10px;color:#f4ecf2}
+.piece-card:active{transform:scale(.99);border-color:#ecb3d8}
+.piece-card img,.piece-card .media-placeholder{width:52px;height:52px;border-radius:11px;object-fit:cover;flex:none;background:#2b2330}
+.piece-card>span{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.piece-card small{color:var(--pink);font-size:10px;font-weight:650;letter-spacing:.05em;text-transform:uppercase}
+.piece-card strong{font-size:13px;overflow-wrap:anywhere}
+.piece-card em{color:var(--muted);font-size:11px;font-style:normal}
+.piece-card svg{color:var(--muted);flex:none}
+/* « Vu dans ces looks » sur la fiche produit */
+.looks-section{margin-top:26px}
+.look-rail{display:flex;gap:11px;overflow-x:auto;padding:4px 0 6px;scrollbar-width:none}
+.look-rail::-webkit-scrollbar{display:none}
+.look-card{flex:none;width:158px;text-align:left;background:#211b26;border:1px solid #403340;border-radius:16px;padding:9px;color:#f4ecf2;display:flex;flex-direction:column;gap:8px}
+.look-card:active{border-color:#ecb3d8;transform:scale(.99)}
+.look-card img,.look-card .media-placeholder{width:100%;height:112px;border-radius:11px;object-fit:cover;background:#2b2330}
+.look-card-author{display:flex;align-items:center;gap:7px;min-width:0}
+.look-card-author strong{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.look-card small{color:var(--muted);font-size:10.5px}
+/* ============================================================
+   Défis communautaires (Fonction 3)
+   ============================================================ */
+.defis-intro{padding:22px 0 6px}
+.defis-intro h1{font-family:Georgia,serif;font-weight:400;font-size:32px;line-height:1.1;margin:7px 0 10px;letter-spacing:-.045em}
+.defis-intro h1 em{color:#efb7da}
+.defis-intro p{font-size:13px;line-height:1.55}
+.defi-form{background:#1f1a24;border:1px solid #403340;border-radius:18px;padding:16px;margin:16px 0 20px}
+.defi-form .form-label{margin:13px 0}
+.defi-switch{display:flex;gap:12px;align-items:flex-start;margin:16px 0 4px;border-top:1px solid #3b3140;padding-top:15px}
+.defi-switch input{appearance:none;flex:none;width:38px;height:23px;border-radius:100px;background:#554858;position:relative;cursor:pointer;margin-top:2px}
+.defi-switch input:after{content:"";position:absolute;width:17px;height:17px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
+.defi-switch input:checked{background:#de9ec9}
+.defi-switch input:checked:after{left:18px}
+.defi-switch span{display:flex;flex-direction:column;gap:4px}
+.defi-switch strong{font-size:12.5px}
+.defi-switch small{color:var(--muted);font-size:11px;line-height:1.45}
+.defis-onglets{display:flex;gap:8px;margin:22px 0 14px}
+.defis-onglets button{flex:1;min-height:44px;border-radius:100px;border:1px solid #4d4050;background:#241d28;color:#ddd1de;font-size:12.5px;font-weight:650}
+.defis-onglets button.selected{border-color:#ecb3d8;background:#edb6da;color:#271726}
+.defis-liste{display:flex;flex-direction:column;gap:12px}
+.defi-card{display:flex;flex-direction:column;gap:9px;text-align:left;width:100%;background:linear-gradient(180deg,#241d2b,#1e1922);border:1px solid #43364a;border-radius:20px;padding:15px;color:#f5eef3}
+.defi-card:active{transform:scale(.99);border-color:#ecb3d8}
+.defi-card-top{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.defi-etat{font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#e9b0d1;background:#e9b0d118;border-radius:100px;padding:5px 10px}
+.defi-etat.budget{color:#f3d9a8;background:#f3d9a818}
+.defi-etat.termine{color:var(--muted);background:#ffffff0d}
+.defi-card strong{font-family:Georgia,serif;font-weight:400;font-size:20px;letter-spacing:-.03em}
+.defi-card p{font-size:12.5px;line-height:1.5;color:#ded3dd;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.defi-card-bas{display:flex;flex-wrap:wrap;gap:5px 12px;color:var(--muted);font-size:11px}
+.defi-participation{align-self:flex-start;font-size:10.5px;font-weight:700;color:#271726;background:#edb6da;border-radius:100px;padding:5px 10px}
+.defis-explorer{margin-top:6px}
+.defis-rail{display:flex;flex-direction:column;gap:11px;margin-top:14px}
+.defi-entete{padding:8px 0 4px}
+.defi-entete h1{font-family:Georgia,serif;font-weight:400;font-size:31px;line-height:1.1;margin:10px 0 10px;letter-spacing:-.045em}
+.defi-regle{font-size:13.5px;line-height:1.6;color:#e2d7e1;margin:12px 0 0}
+.defi-chiffres{display:flex;flex-wrap:wrap;gap:8px 14px;margin:15px 0 4px;color:var(--muted);font-size:11.5px}
+.defi-chiffres span{display:inline-flex;align-items:center;gap:6px}
+.defi-chiffres svg{color:var(--pink)}
+.defi-actions{display:flex;flex-direction:column;gap:9px;margin:18px 0 4px}
+.defi-actions .button{width:100%}
+.defi-supprimer{color:#e8a9c6;margin-top:12px}
+.defi-choix{background:#211b26;border:1px solid #403340;border-radius:16px;padding:15px;margin-top:16px}
+.defi-choix .button{width:100%;margin-top:10px}
+.defi-choix .draft-list img,.defi-choix .draft-list .media-placeholder{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none}
+.defi-entries{display:flex;flex-direction:column;gap:14px}
+.defi-entry{background:#1f1a24;border:1px solid #3d3243;border-radius:20px;overflow:hidden}
+.defi-entry.mine{border-color:#8e5c84;background:#241c28}
+.defi-entry-media{display:block;width:100%;border:0;padding:0;background:#2b2330;position:relative;aspect-ratio:4/3}
+.defi-entry-media img,.defi-entry-media .media-placeholder{width:100%;height:100%;object-fit:cover}
+.defi-rang{position:absolute;left:12px;top:12px;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:750;color:#2a1a26;background:#f0d9e8}
+.defi-rang.rang-1{background:#f5d78e}
+.defi-rang.rang-2{background:#dfe3ea;color:#2a2a33}
+.defi-rang.rang-3{background:#e6c3a6;color:#33241c}
+.defi-entry-corps{padding:13px 14px 14px}
+.defi-entry-auteur{display:flex;align-items:center;gap:8px;background:none;border:0;color:#f2e9f0;padding:0;margin-bottom:9px}
+.defi-entry-auteur strong{font-size:12.5px}
+.defi-toi{font-size:10px;font-weight:700;color:#271726;background:#edb6da;border-radius:100px;padding:3px 8px}
+.defi-entry-corps p{font-size:12.5px;line-height:1.55;color:#ded3dd;margin:0 0 10px}
+.defi-pieces{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.defi-pieces button{border:1px solid #694964;background:#dca4cc14;color:#efc2df;font-size:10.5px;border-radius:100px;padding:6px 10px}
+.defi-budget{font-size:11.5px;color:#e3d7e2}
+.defi-budget.depasse{color:#ffd0d8}
+.defi-entry-bas{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid #3a2f3f;padding-top:11px;color:var(--muted);font-size:11.5px}
+.defi-voter{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 16px;border-radius:100px;border:1px solid #6c4a66;background:#332339;color:#f2dcec;font-size:12px;font-weight:700}
+.defi-voter.voted{border-color:#ecb3d8;background:#edb6da;color:#271726}
+.defi-voter:disabled{opacity:.6}
+.defi-badge{display:inline-flex;align-items:center;gap:8px;width:100%;margin:4px 0 0;padding:12px 14px;border-radius:14px;border:1px solid #6c4a66;background:#dca4cc14;color:#f0c8e2;font-size:12px;font-weight:650;text-align:left}
+.defi-bbcode{}
+.defi-bandeau{background:linear-gradient(180deg,#2a2033,#211a26);border:1px solid #4b3a52;border-radius:18px;padding:15px;margin:18px 0 4px}
+.defi-bandeau .eyebrow{display:inline-flex;align-items:center;gap:6px}
+.defi-bandeau strong{display:block;font-family:Georgia,serif;font-weight:400;font-size:20px;margin:8px 0 6px}
+.defi-bandeau p{font-size:12.5px;line-height:1.55;color:#ded3dd;margin:0 0 8px}
+.defi-bandeau small{display:block;color:var(--muted);font-size:11.5px;margin-top:4px}
+.defi-bandeau small.depasse{color:#ffd0d8}
+
+/* ============================================================
+   MODÉRATION — console de la sécurité communautaire
+   ============================================================ */
+.moderation-acces{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;text-align:left;background:#221c26;border:1px solid #45364a;border-radius:14px;padding:12px 14px;color:#f6ecf3;margin-bottom:16px}
+.moderation-acces>svg:first-child{color:var(--pink);flex:none}
+.moderation-acces>svg:last-child{color:var(--muted);flex:none}
+.moderation-acces span{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.moderation-acces strong{font-size:13px}
+.moderation-acces small{color:var(--muted);font-size:10.5px;line-height:1.4}
+.modo-bandeau{display:flex;align-items:flex-start;gap:10px;background:#2b1d22;border-bottom:1px solid #5c3a3f;color:#f7e6ea;padding:13px 18px;font-size:11.5px;line-height:1.55}
+.modo-bandeau svg{color:#f0a8b6;flex:none;margin-top:1px}
+.modo-bandeau span{flex:1;display:block}
+.modo-bandeau strong{display:block;margin-bottom:3px;font-size:12px}
+.modo-bandeau button{border:1px solid #7d5057;background:#ffffff10;color:#f9eaee;border-radius:100px;padding:8px 13px;font-size:11px;font-weight:650;flex:none;min-height:36px}
+.modo-liste{display:flex;flex-direction:column;gap:11px;margin-top:4px}
+.modo-carte{background:#211d27;border:1px solid #3d3440;border-radius:16px;overflow:hidden}
+.modo-carte.masque{border-color:#5c3a3f;background:#241a1f}
+.modo-media{display:block;width:100%;border:0;padding:0;background:none}
+.modo-media>img,.modo-media>.media-placeholder{width:100%;height:132px;object-fit:cover}
+.modo-corps{padding:13px 14px 15px}
+.modo-entete{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.modo-entete .defi-entry-auteur{margin:0;flex:1;min-width:0}
+.modo-etat{font-size:10px;font-weight:700;border-radius:100px;padding:4px 9px;background:#e5a1ce22;color:#f0bcdc;border:1px solid #6d4a63;white-space:nowrap}
+.modo-etat.attente{background:#f0c98d1f;color:#f3d19f;border-color:#7a5f3c}
+.modo-citation{font-size:12.5px;line-height:1.6;color:#f3ecf1;margin:0 0 9px}
+.modo-motif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;line-height:1.5;color:#e7bccd;margin:0}
+.modo-motif svg{color:#e79ab4;flex:none}
+.modo-motif small{color:var(--muted);font-size:10px;margin-left:auto}
+.modo-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:13px}
+.modo-actions .button{flex:1;min-width:140px}
+.modo-journal{margin:10px 0 0;font-size:10.5px;color:var(--muted)}
+/* Une carte sans photo reste compacte : pas de grand cadre vide. */
+.modo-carte:not(:has(.modo-media)) .modo-corps{padding-top:15px}
+
+/* ============================================================
+   ACCÈS PRIVÉ — écran de code quand l'hébergement est réservé
+   ============================================================ */
+.acces-prive{display:grid;place-items:center;padding:26px 22px calc(26px + env(safe-area-inset-bottom))}
+.acces-carte{width:100%;max-width:400px;background:linear-gradient(155deg,#221a26,#17141c);border:1px solid #3f3243;border-radius:22px;padding:28px 24px}
+.acces-carte .eyebrow{display:inline-flex;align-items:center;gap:7px}
+.acces-carte h1{font-family:Georgia,"Times New Roman",serif;font-size:29px;font-weight:400;letter-spacing:-.045em;line-height:1.1;margin:14px 0 12px}
+.acces-carte h1 em{font-style:italic;color:var(--pink)}
+.acces-carte p{font-size:12.5px;line-height:1.6}
+.acces-carte form{display:flex;flex-direction:column;gap:11px;margin:22px 0 0}
+.acces-carte input{background:#1b1721;border:1px solid #4b3c50;border-radius:13px;color:#fff;padding:14px 15px;font-size:13px;outline:0;min-height:48px}
+.acces-carte input:focus{border-color:var(--pink)}
+.acces-carte .button{min-height:49px;width:100%}
+.acces-carte .form-error{margin-top:13px}
+.acces-note{margin:18px 0 0;font-size:11px;color:var(--muted);line-height:1.55}

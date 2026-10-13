@@ -36,3 +36,56 @@ const canonical = value => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '
 export const productKey = (brand,name) => canonical(brand) + '|' + canonical(name);
 for (const p of all('SELECT id,name,brand FROM products WHERE product_key IS NULL')) run('UPDATE products SET product_key=? WHERE id=?',productKey(p.brand,p.name),p.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS products_key_unique ON products(product_key)');
+
+/* Listes / collections partageables (Fonction 4 du cahier des charges).
+   - collections : une liste appartient à une personne, avec un titre, une
+     description courte et une visibilité publique ou privée.
+   - collection_items : les produits rangés dans la liste, dans l'ordre.
+     ON DELETE CASCADE : si un compte ou un produit disparaît, les lignes
+     associées partent avec lui (aucune donnée orpheline). */
+db.exec(`CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', visibility TEXT NOT NULL DEFAULT 'public', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS collection_items (collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, added_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(collection_id, product_id));
+CREATE INDEX IF NOT EXISTS collections_owner ON collections(owner_id, id DESC);
+CREATE INDEX IF NOT EXISTS collection_items_liste ON collection_items(collection_id, position, added_at);`);
+
+/* Les pièces d'un look (Fonction 2 du cahier des charges).
+   Un look (« look », « tenue », « comparaison ») peut rassembler plusieurs
+   produits de catégories différentes : maquillage, vêtements, chaussures,
+   accessoires, parfum. Chaque produit garde sa fiche, vers laquelle on
+   renvoie. post_id + product_id forment la clé : impossible de ranger deux
+   fois la même pièce dans un look. Les suppressions en cascade évitent
+   toute ligne orpheline si un compte ou un produit disparaît. */
+db.exec(`CREATE TABLE IF NOT EXISTS post_products (post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(post_id, product_id));
+CREATE INDEX IF NOT EXISTS post_products_look ON post_products(post_id, position);
+CREATE INDEX IF NOT EXISTS post_products_piece ON post_products(product_id);`);
+
+/* Défis communautaires (Fonction 3 du cahier des charges).
+   - challenges : un défi proposé par une personne (titre, règle du jeu,
+     catégorie, budget indicatif éventuel, date de fin, votes autorisés).
+   - challenge_entries : les participations. La clé (défi, personne) garantit
+     UNE seule participation par défi ; elle pointe vers une publication.
+   - challenge_votes : les votes. La clé (défi, votant) garantit UN seul vote
+     par personne et par défi.
+   Suppressions en cascade : fermer un compte ou supprimer une publication
+   nettoyé automatiquement les participations et les votes associés. */
+db.exec(`CREATE TABLE IF NOT EXISTS challenges (id INTEGER PRIMARY KEY, author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, brief TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, budget REAL, votes_allowed INTEGER NOT NULL DEFAULT 1, ends_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS challenge_entries (challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(challenge_id, user_id));
+CREATE TABLE IF NOT EXISTS challenge_votes (challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE, voter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(challenge_id, voter_id));
+CREATE INDEX IF NOT EXISTS challenge_entries_post ON challenge_entries(post_id);
+CREATE INDEX IF NOT EXISTS challenge_votes_post ON challenge_votes(post_id);`);
+
+/* Modération (sécurité de la communauté).
+   Colonnes ajoutées de façon additive : les bases existantes gardent leurs
+   données et reçoivent simplement les nouvelles colonnes.
+   - users.role            : 'member' (par défaut) ou 'moderator'. Aucun moyen
+     de devenir modérateur depuis l'application : la liste vient du serveur.
+   - posts.hidden          : 1 = contenu masqué par la modération.
+   - reports.status/...    : suivi du traitement d'un signalement. */
+if (!all('PRAGMA table_info(users)').some(c => c.name === 'role')) db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+if (!all('PRAGMA table_info(posts)').some(c => c.name === 'hidden')) db.exec('ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+const colonnesRapports = all('PRAGMA table_info(reports)').map(c => c.name);
+if (!colonnesRapports.includes('status')) db.exec("ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+if (!colonnesRapports.includes('action')) db.exec('ALTER TABLE reports ADD COLUMN action TEXT');
+if (!colonnesRapports.includes('resolved_by')) db.exec('ALTER TABLE reports ADD COLUMN resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!colonnesRapports.includes('resolved_at')) db.exec('ALTER TABLE reports ADD COLUMN resolved_at TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS reports_status ON reports(status, id DESC); CREATE INDEX IF NOT EXISTS posts_hidden ON posts(hidden, id DESC);');

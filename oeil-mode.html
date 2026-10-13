@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- On empêche le navigateur de zoomer tout seul : l'appli est déjà pensée pour le téléphone -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#100e14">
+<!-- Permet d'ajouter l'appli sur l'écran d'accueil de l'iPhone -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="L'Œil Mode">
+<meta name="description" content="L'Œil Mode : donne ton avis sur les sacs, montres, lunettes et bijoux. Application 100 % hors ligne, tes données restent sur ton téléphone.">
+<title>L'Œil Mode — ton avis sur les accessoires</title>
+<!-- Petite icône de l'appli, dessinée dans le fichier (aucune image à télécharger) -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23100e14'/%3E%3Cg fill='none' stroke='%23a78bfa' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M4 13c2.2-3.6 5-5.4 8-5.4S17.8 9.4 20 13c-2.2 3.6-5 5.4-8 5.4S6.2 16.6 4 13Z'/%3E%3Ccircle cx='12' cy='13' r='2.4'/%3E%3C/g%3E%3C/svg%3E">
+
+<!--
+  ============================================================
+  L'ŒIL MODE — ÉTAPE 1 : l'écran d'accueil
+  Habillage sombre inspiré de la maquette fournie
+  (fond très sombre, violet, titres clairs, gros boutons blancs).
+  ============================================================
+  Règles respectées par ce fichier :
+   - UN seul fichier .html : aucune image, aucune police, aucun lien externe
+   - Tout fonctionne sans Internet (les dessins sont dessinés en SVG dans le code)
+   - Pensé d'abord pour l'iPhone : gros boutons (mini 44 px, ici 56 px et plus)
+   - Tout est en français, et chaque partie est commentée
+   - Le moteur n'a pas changé depuis la version claire : seuls les habits
+     (couleurs, formes, typographie) ont été remplacés.
+  ============================================================
+-->
+
+<style>
+/* ------------------------------------------------------------------
+   1. LES COULEURS ET LES MESURES (le "cahier des couleurs")
+   On les change ici : tout le reste du fichier suit automatiquement.
+   ------------------------------------------------------------------ */
+:root{
+  --fond:        #100e14;  /* le fond presque noir de la maquette */
+  --carte:       #1a1723;  /* les blocs posés sur le fond */
+  --carte-2:     #221e2d;  /* un cran plus clair : pastilles, objets dessinés */
+  --bord:        rgba(255,255,255,.09);  /* traits fins, à peine visibles */
+  --texte:       #f6f4fb;  /* texte principal, blanc cassé */
+  --texte-doux:  #b4aec4;  /* texte secondaire, gris mauve */
+  --violet:      #a78bfa;  /* l'accent principal (lavande lumineuse) */
+  --violet-fonce:#7c5cf5;  /* pour les dégradés et les lueurs */
+  --rose:        #ec4899;  /* l'accent secondaire (rose), utilisé avec parcimonie */
+  --rayon:       22px;
+
+  /* Les deux polices du téléphone : la première pour le texte (SF Pro sur iPhone),
+     la seconde pour le nom de l'appli (Georgia, présente partout). */
+  --police-texte: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --police-titre: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+/* ------------------------------------------------------------------
+   2. REMISE À ZÉRO ET AMBIANCE GÉNÉRALE
+   ------------------------------------------------------------------ */
+*{ box-sizing:border-box; margin:0; padding:0; }
+
+html{ -webkit-text-size-adjust:100%; }
+
+body{
+  font-family:var(--police-texte);
+  color:var(--texte);
+  font-size:16px;
+  line-height:1.5;
+  min-height:100dvh;
+  /* Les deux halos de lumière : violet en haut, rose très léger en bas.
+     Comme c'est un dégradé calculé par le navigateur, ça ne pèse rien
+     et ça marche sans Internet. */
+  background:
+    radial-gradient(120% 55% at 50% -12%, rgba(124,92,245,.38), rgba(16,14,20,0) 62%),
+    radial-gradient(90% 45% at 100% 108%, rgba(236,72,153,.12), rgba(16,14,20,0) 60%),
+    var(--fond);
+  background-attachment:fixed;
+  /* Encoche et barre du bas de l'iPhone : on laisse la place.
+     Le bas réserve aussi la hauteur de la barre de navigation. */
+  padding:calc(14px + env(safe-area-inset-top)) 18px calc(104px + env(safe-area-inset-bottom));
+  -webkit-tap-highlight-color:transparent;
+}
+
+.app{ max-width:520px; margin:0 auto; }  /* sur ordinateur, l'appli reste étroite comme un téléphone */
+
+/* Un anneau visible quand on navigue au clavier : utile, invisible au doigt */
+:focus-visible{ outline:3px solid var(--violet); outline-offset:3px; border-radius:14px; }
+
+/* ------------------------------------------------------------------
+   3. LE HAUT DE L'ÉCRAN : l'identité + la pastille « Hors ligne »
+   ------------------------------------------------------------------ */
+.haut{ display:flex; align-items:center; gap:9px; }
+
+.logo{
+  width:34px; height:34px; border-radius:50%;
+  display:grid; place-items:center; flex:none;
+  background:linear-gradient(135deg, var(--violet-fonce), var(--rose));
+  box-shadow:0 6px 18px rgba(124,92,245,.45);
+  color:#fff;
+}
+.marque{
+  font-family:var(--police-titre);
+  font-size:18px; letter-spacing:.3px; color:var(--texte);
+}
+/* La petite pastille qui dit tout de suite : « ça marche sans Internet » */
+.etat{
+  margin-left:auto; display:inline-flex; align-items:center; gap:5px;
+  padding:6px 11px; border-radius:999px;
+  border:1px solid var(--bord); background:rgba(255,255,255,.04);
+  font-size:11px; font-weight:600; letter-spacing:.4px; color:var(--texte-doux);
+}
+.etat svg{ color:var(--violet); }
+
+/* ------------------------------------------------------------------
+   4. LE GRAND TITRE D'ACCUEIL
+   ------------------------------------------------------------------ */
+.eyebrow{
+  margin-top:24px; text-align:center;
+  font-size:11px; font-weight:700; letter-spacing:2.4px; text-transform:uppercase;
+  color:var(--violet);
+}
+.titre{
+  margin-top:9px; text-align:center;
+  font-size:31px; line-height:1.15; letter-spacing:-.4px; font-weight:800;
+}
+.titre em{
+  display:block; margin-top:2px;
+  font-family:var(--police-titre); font-style:italic; font-weight:400;
+  font-size:30px;
+  /* Un dégradé violet → rose appliqué uniquement sur les lettres */
+  background:linear-gradient(100deg, var(--violet), var(--rose));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.accroche{ margin-top:12px; text-align:center; color:var(--texte-doux); font-size:15px; }
+
+/* ------------------------------------------------------------------
+   5. LA VITRINE : le bloc illustré + le gros bouton principal
+   ------------------------------------------------------------------ */
+.vitrine{
+  margin-top:22px; padding:16px 16px 18px; text-align:center;
+  border:1px solid var(--bord);
+  border-radius:calc(var(--rayon) + 6px);
+  /* Une lueur violette qui descend du haut du bloc */
+  background:linear-gradient(180deg, rgba(124,92,245,.26), rgba(124,92,245,0) 62%), var(--carte);
+  box-shadow:0 24px 60px rgba(0,0,0,.5);
+  overflow:hidden;
+}
+.vitrine svg.decor{ display:block; width:100%; height:auto; }
+.vitrine h2{ font-size:20px; font-weight:800; margin-top:10px; }
+.vitrine p{ color:var(--texte-doux); margin-top:5px; font-size:14.5px; }
+
+/* ------------------------------------------------------------------
+   6. LES BOUTONS — règle d'or : jamais moins de 44 px de haut
+   ------------------------------------------------------------------ */
+.btn{
+  display:flex; align-items:center; justify-content:center; gap:9px;
+  width:100%; min-height:56px;          /* 56 px : très confortable au pouce */
+  padding:0 18px;
+  font-family:var(--police-texte); font-size:16.5px; font-weight:700;
+  border-radius:999px;                  /* forme de gélule, comme la maquette */
+  border:1px solid transparent;
+  cursor:pointer;
+  transition:transform .12s ease, box-shadow .12s ease;
+}
+.btn:active{ transform:scale(.975); }   /* petit effet « pressé » */
+.btn-principal{
+  margin-top:16px;
+  background:#fff; color:#141019;        /* bouton blanc, texte sombre */
+  box-shadow:0 14px 34px rgba(124,92,245,.35);
+}
+.btn-principal svg{ color:var(--violet-fonce); }
+
+/* ------------------------------------------------------------------
+   7. LES CATÉGORIES : des pastilles rondes, comme dans la maquette
+   ------------------------------------------------------------------ */
+.section-titre{ font-size:17px; font-weight:800; margin:28px 0 4px; }
+.section-sous{ font-size:13.5px; color:var(--texte-doux); margin-bottom:14px; }
+
+.grille{ list-style:none; display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+
+.tuile{
+  width:100%; min-height:96px;           /* grande zone à toucher */
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px;
+  background:transparent; border:0; cursor:pointer;
+  font-family:var(--police-texte); font-size:12.5px; font-weight:600; color:var(--texte);
+  transition:transform .12s ease;
+}
+.tuile:active{ transform:scale(.95); }
+/* La pastille ronde qui contient le dessin */
+.pastille{
+  width:62px; height:62px; border-radius:50%;
+  display:grid; place-items:center;
+  background:var(--carte-2); border:1px solid var(--bord);
+  color:var(--texte);
+  transition:background .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+/* La catégorie déjà choisie la dernière fois reste allumée en violet */
+.tuile.choisie .pastille{
+  background:linear-gradient(135deg, var(--violet-fonce), var(--rose));
+  border-color:transparent; color:#fff;
+  box-shadow:0 10px 26px rgba(124,92,245,.5);
+}
+.tuile.choisie{ color:var(--violet); }
+
+/* ------------------------------------------------------------------
+   8. LE BAS DE PAGE : la promesse vie privée + le compteur de visites
+   ------------------------------------------------------------------ */
+.note{
+  margin-top:26px; padding-top:16px;
+  border-top:1px solid var(--bord);
+  font-size:12.5px; color:var(--texte-doux); text-align:center;
+}
+/* Le cadenas reste collé au texte, même si la ligne se coupe en deux */
+.note-ligne svg{ vertical-align:-2px; margin-right:5px; color:var(--violet); }
+.visites{ margin-top:8px; font-size:11.5px; color:var(--texte-doux); text-align:center; opacity:.8; }
+
+/* ------------------------------------------------------------------
+   9. LA BARRE DU BAS (Accueil · Explorer · + · Mes avis)
+   C'est le repère visuel de la maquette : elle reste collée en bas.
+   ------------------------------------------------------------------ */
+.barre{
+  position:fixed; left:0; right:0; bottom:0; z-index:5;
+  display:flex; align-items:flex-end; justify-content:space-around;
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  background:rgba(16,14,20,.82);
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  border-top:1px solid var(--bord);
+}
+.onglet{
+  flex:1; max-width:96px; min-height:56px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  background:transparent; border:0; cursor:pointer;
+  font-family:var(--police-texte); font-size:10.5px; font-weight:600;
+  color:var(--texte-doux);
+}
+.onglet.actif{ color:var(--violet); }
+/* Le bouton rond du milieu (+), dégradé violet → rose comme la maquette */
+.onglet-plus{
+  flex:none; width:56px; height:56px; border-radius:50%; border:0; cursor:pointer;
+  display:grid; place-items:center; color:#fff;
+  background:linear-gradient(135deg, var(--violet-fonce), var(--rose));
+  box-shadow:0 10px 26px rgba(124,92,245,.55);
+  transition:transform .12s ease;
+}
+.onglet-plus:active{ transform:scale(.94); }
+
+/* ------------------------------------------------------------------
+   10. LE MESSAGE VOLANT ("toast") : la petite bulle qui répond au doigt
+   ------------------------------------------------------------------ */
+#toast{
+  position:fixed; left:50%; bottom:calc(96px + env(safe-area-inset-bottom));
+  transform:translate(-50%, 140%);
+  visibility:hidden;                 /* cachée ET hors écran tant qu'elle n'annonce rien */
+  max-width:calc(100% - 36px);
+  background:#fff; color:#141019;
+  padding:14px 18px; border-radius:16px;
+  font-size:14px; font-weight:600; text-align:center;
+  box-shadow:0 16px 40px rgba(0,0,0,.5);
+  transition:transform .25s ease, visibility .25s;
+  z-index:10;
+}
+#toast.visible{ transform:translate(-50%, 0); visibility:visible; }
+
+/* Si la personne a demandé moins d'animations dans son téléphone, on respecte */
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; }
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+
+  <!-- ============ HAUT : l'identité de l'appli ============ -->
+  <header class="haut">
+    <!-- L'œil, dessiné en SVG (aucun fichier image externe) -->
+    <span class="logo" aria-hidden="true">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.2 13.4C4.6 9.4 8 7.4 12 7.4s7.4 2 9.8 6c-2.4 4-5.8 6-9.8 6s-7.4-2-9.8-6Z"/>
+        <circle cx="12" cy="13.4" r="2.9"/>
+      </svg>
+    </span>
+    <span class="marque">L'Œil Mode</span>
+    <!-- Cette pastille est la promesse de l'appli, affichée dès l'ouverture -->
+    <span class="etat">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12.5 9.5 18 20 6.5"/>
+      </svg>
+      HORS LIGNE
+    </span>
+  </header>
+
+  <main>
+    <!-- ============ LE TITRE : on explique en une phrase ce qu'on fait ici ============ -->
+    <p class="eyebrow">Avis sur les accessoires</p>
+    <h1 class="titre">Dis ce que tu en penses,<em>sans filtre.</em></h1>
+    <p class="accroche">Sacs, montres, lunettes, bijoux… Ton avis aide les autres à bien choisir. Et tout reste sur ton téléphone.</p>
+
+    <!-- ============ LA VITRINE : illustration + gros bouton ============ -->
+    <section class="vitrine">
+      <!--
+        L'illustration est dessinée directement dans le code (SVG).
+        Avantage : zéro image à télécharger, donc 100 % hors ligne.
+      -->
+      <svg class="decor" viewBox="0 0 280 168" role="img" aria-label="Un sac, des lunettes de soleil et une montre posés ensemble">
+        <!-- Le halo violet derrière les objets -->
+        <circle cx="140" cy="84" r="70" fill="rgba(124,92,245,.18)"/>
+        <circle cx="140" cy="84" r="70" fill="none" stroke="rgba(167,139,250,.3)" stroke-width="1.5"/>
+        <circle cx="140" cy="84" r="50" fill="rgba(236,72,153,.09)"/>
+
+        <!-- Le sac à main -->
+        <g stroke="#f6f4fb" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round">
+          <path d="M115 82h50l-5 40a8 8 0 0 1-8 7h-24a8 8 0 0 1-8-7z" fill="#221e2d"/>
+          <path d="M129 82v-7a11 11 0 0 1 22 0v7" fill="none"/>
+        </g>
+        <circle cx="140" cy="96" r="3.6" fill="#a78bfa"/>
+
+        <!-- Les lunettes de soleil (à gauche) -->
+        <g transform="translate(30 60)">
+          <circle cx="16" cy="20" r="13" fill="#221e2d" stroke="#f6f4fb" stroke-width="3.2"/>
+          <circle cx="48" cy="20" r="13" fill="#221e2d" stroke="#f6f4fb" stroke-width="3.2"/>
+          <path d="M29 18q3-4 6 0" fill="none" stroke="#f6f4fb" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M3 14 0 9" fill="none" stroke="#f6f4fb" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M61 14 64 9" fill="none" stroke="#f6f4fb" stroke-width="3.2" stroke-linecap="round"/>
+        </g>
+
+        <!-- La montre (à droite) -->
+        <g transform="translate(222 74)">
+          <path d="M-7-11-5-24h10l2 13" fill="none" stroke="#f6f4fb" stroke-width="3.2" stroke-linejoin="round"/>
+          <path d="M-7 11-5 24h10l2-13" fill="none" stroke="#f6f4fb" stroke-width="3.2" stroke-linejoin="round"/>
+          <circle r="15" fill="#221e2d" stroke="#f6f4fb" stroke-width="3.2"/>
+          <path d="M0-8V0l6 4" fill="none" stroke="#ec4899" stroke-width="3.2" stroke-linecap="round"/>
+        </g>
+
+        <!-- Deux étincelles pour le côté « détail précieux » -->
+        <path d="M62 40l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#a78bfa"/>
+        <path d="M218 30l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#ec4899"/>
+      </svg>
+
+      <h2>À toi de juger</h2>
+      <p>Une photo, quelques étoiles, deux lignes d'avis. Ça prend 30 secondes.</p>
+
+      <!-- Le bouton principal : 56 px de haut, impossible à rater au pouce -->
+      <button class="btn btn-principal" id="btn-avis">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 3.2l2.7 5.7 6.2.8-4.5 4.4 1.1 6.2-5.5-3-5.5 3 1.1-6.2L2.9 9.7l6.2-.8z"/>
+        </svg>
+        Donner mon avis
+      </button>
+    </section>
+
+    <!-- ============ LES CATÉGORIES : le choix se fait au doigt ============ -->
+    <h2 class="section-titre">Par quoi on commence ?</h2>
+    <p class="section-sous">Choisis un accessoire, on t'écoute.</p>
+    <ul class="grille" id="grille">
+      <!-- Chaque pastille sera remplie par le code (voir plus bas) : une seule liste à modifier. -->
+    </ul>
+
+    <!-- ============ LE BAS : la promesse vie privée ============ -->
+    <p class="note">
+      <span class="note-ligne">
+        <!-- Le petit cadenas est dessiné ici : aucun emoji, donc le même rendu sur tous les téléphones -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4.5" y="10.5" width="15" height="9.5" rx="2.6"/><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7"/>
+        </svg>
+        100 % hors ligne · Aucun compte, aucun nom demandé
+      </span>
+      Tes avis restent dans ce navigateur, et nulle part ailleurs.
+    </p>
+    <p class="visites" id="visites"></p>
+  </main>
+</div>
+
+<!-- ============ LA BARRE DU BAS ============
+     « Accueil » est l'écran où l'on est. Les autres existent visuellement,
+     mais répondent honnêtement qu'ils arrivent à l'étape suivante. -->
+<nav class="barre" aria-label="Navigation principale">
+  <button class="onglet actif" aria-current="page" data-msg="Tu es déjà sur l'accueil.">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3.6 10.7 12 3.9l8.4 6.8v8.6a.9.9 0 0 1-.9.9h-4.3v-6H8.8v6H4.5a.9.9 0 0 1-.9-.9z"/>
+    </svg>
+    Accueil
+  </button>
+
+  <button class="onglet" data-msg="Explorer : les tendances arrivent à l'étape suivante.">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.6"/><path d="M15.3 8.7l-1.9 4.7-4.7 1.9 1.9-4.7z"/>
+    </svg>
+    Explorer
+  </button>
+
+  <!-- Le + du milieu : il lance exactement la même action que le grand bouton blanc -->
+  <button class="onglet-plus" id="plus" aria-label="Donner mon avis">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+      <path d="M12 5.6v12.8M5.6 12h12.8"/>
+    </svg>
+  </button>
+
+  <button class="onglet" data-msg="Mes avis : tu les retrouveras ici après l'étape 2.">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M6.6 3.7h10.8a.9.9 0 0 1 .9.9v15.7l-6.3-3.9-6.3 3.9V4.6a.9.9 0 0 1 .9-.9Z"/>
+    </svg>
+    Mes avis
+  </button>
+</nav>
+
+<!-- La bulle de message : elle est vide au départ, le code la remplit -->
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ==================================================================
+   ／!\ LE MOTEUR N'A PAS CHANGÉ ／!\
+   Tout ce qui suit est identique à la version claire validée :
+   le rangement des données, les catégories, le bouton, les visites.
+   Seul l'habillage (au-dessus) a été remplacé.
+   ================================================================== */
+
+/* ==================================================================
+   1. LE "COFFRE" LOCAL  (localStorage préfixé — règle vie privée)
+   ------------------------------------------------------------------
+   localStorage = un tiroir fourni par le navigateur, qui garde les
+   informations même après avoir fermé l'appli. Il reste DANS le
+   téléphone : rien n'est envoyé sur Internet.
+
+   On préfixe toutes les clés par "oeilmode." pour ne jamais écraser
+   les données d'une autre appli du même navigateur.
+
+   RGPD : on ne stocke jamais de nom, d'e-mail, ni de position.
+   Uniquement des compteurs, des choix de catégories et des textes
+   d'avis que la personne écrit elle-même.
+   ================================================================== */
+const PREFIXE = 'oeilmode.';
+
+const local = {
+  // Lire une valeur. Si elle n'existe pas encore, on renvoie la valeur par défaut.
+  lire(cle, defaut){
+    try {
+      const brut = localStorage.getItem(PREFIXE + cle);
+      return brut === null ? defaut : JSON.parse(brut);
+    } catch (e) {
+      return defaut;   // navigateur en mode privé par exemple : on ne bloque jamais l'appli
+    }
+  },
+  // Écrire une valeur (ici en JSON, pour pouvoir ranger des listes plus tard).
+  ecrire(cle, valeur){
+    try { localStorage.setItem(PREFIXE + cle, JSON.stringify(valeur)); } catch (e) {}
+  }
+};
+
+/* ==================================================================
+   2. LA BULLE DE MESSAGE ("toast")
+   ------------------------------------------------------------------
+   Exemple concret : la personne touche « Montres ». Comme l'écran
+   des montres n'existe pas encore, au lieu de laisser un bouton mort,
+   on affiche : « Montres : on prépare cet écran à la prochaine étape. »
+   ================================================================== */
+const bulle = document.getElementById('toast');
+let minuteurBulle;
+
+function info(message){
+  bulle.textContent = message;
+  bulle.classList.add('visible');
+  clearTimeout(minuteurBulle);
+  minuteurBulle = setTimeout(() => bulle.classList.remove('visible'), 2800);
+}
+
+/* ==================================================================
+   3. LES CATÉGORIES
+   ------------------------------------------------------------------
+   Pour ajouter une catégorie plus tard : une seule ligne à rajouter
+   dans cette liste, avec son dessin. Rien d'autre à modifier.
+   ================================================================== */
+const CATEGORIES = [
+  {
+    nom: 'Sacs',
+    dessin: '<path d="M5 8.5h14l-1.2 11a2.2 2.2 0 0 1-2.2 2H8.4a2.2 2.2 0 0 1-2.2-2z"/><path d="M8.8 8.5V6.9a3.2 3.2 0 0 1 6.4 0v1.6"/>'
+  },
+  {
+    nom: 'Montres',
+    dessin: '<circle cx="12" cy="12" r="5.2"/><path d="M12 10v2.3l1.7 1.2"/><path d="M9.3 7.1 9.7 3.9h4.6l.4 3.2"/><path d="M9.3 16.9l.4 3.2h4.6l.4-3.2"/>'
+  },
+  {
+    nom: 'Lunettes',
+    dessin: '<circle cx="6.9" cy="13.6" r="3.6"/><circle cx="17.1" cy="13.6" r="3.6"/><path d="M10.5 13.2q1.5-1.4 3 0"/><path d="M3.4 12.4 4.9 9.8"/><path d="M20.6 12.4 19.1 9.8"/>'
+  },
+  {
+    nom: 'Bijoux',
+    dessin: '<path d="M5 4.2c0 6.1 3.1 9.6 7 9.6s7-3.5 7-9.6"/><path d="M12 14.2 9.9 17l2.1 3 2.1-3z"/>'
+  },
+  {
+    nom: 'Chaussures',
+    dessin: '<path d="M3.2 17.3v-3.4c0-.6.5-1.2 1.1-1.3l2.9-.4 3.2-3.1c.5-.5 1.4-.3 1.7.4l.6 1.5c.5 1.2 1.6 1.9 2.9 1.9h2.9c1.5 0 2.7 1.2 2.7 2.7v1.7z"/><path d="M3.2 17.3h18.2"/>'
+  },
+  {
+    nom: 'Chapeaux',
+    dessin: '<path d="M8.7 16.9V10a1 1 0 0 1 1-1h4.6a1 1 0 0 1 1 1v6.9"/><path d="M8.8 12.4h6.4"/><path d="M3.4 17.9c0-1.2 3.8-2 8.6-2s8.6.8 8.6 2-3.8 2-8.6 2-8.6-.8-8.6-2Z"/>'
+  }
+];
+
+// On garde en mémoire la dernière catégorie touchée (utile dès l'étape 2).
+const derniereCat = local.lire('derniere_categorie', null);
+
+// On construit les pastilles et on les pose dans la page.
+const grille = document.getElementById('grille');
+
+CATEGORIES.forEach(function(cat){
+  const li = document.createElement('li');
+
+  const bouton = document.createElement('button');
+  bouton.className = 'tuile' + (cat.nom === derniereCat ? ' choisie' : '');
+  bouton.type = 'button';
+  bouton.setAttribute('aria-label', 'Voir les avis sur les ' + cat.nom.toLowerCase());
+
+  // La pastille ronde contient le dessin ; l'étiquette est en dessous.
+  bouton.innerHTML =
+    '<span class="pastille"><svg width="27" height="27" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true">' + cat.dessin + '</svg></span>' +
+    '<span class="etiquette"></span>';
+  bouton.querySelector('.etiquette').textContent = cat.nom;
+
+  // Quand on touche la pastille :
+  bouton.addEventListener('click', function(){
+    local.ecrire('derniere_categorie', cat.nom);      // on se souvient du choix
+    bouton.parentElement.parentElement
+      .querySelectorAll('.tuile')
+      .forEach(t => t.classList.remove('choisie'));
+    bouton.classList.add('choisie');                  // la pastille choisie s'allume en violet
+    info(cat.nom + ' : on prépare cet écran à la prochaine étape.');
+  });
+
+  li.appendChild(bouton);
+  grille.appendChild(li);
+});
+
+/* ==================================================================
+   4. LE BOUTON « DONNER MON AVIS » (et le + de la barre du bas)
+   ------------------------------------------------------------------
+   Les deux font exactement la même chose : on écrit l'action une
+   seule fois, ici, pour éviter de la recopier.
+   ================================================================== */
+function lancerAvis(){
+  const cat = local.lire('derniere_categorie', null);
+  info(cat
+    ? 'Prochaine étape : l\'écran d\'avis pour « ' + cat + ' ».'
+    : 'Prochaine étape : l\'écran pour écrire ton avis.');
+}
+
+document.getElementById('btn-avis').addEventListener('click', lancerAvis);
+document.getElementById('plus').addEventListener('click', lancerAvis);
+
+/* ==================================================================
+   5. LES ONGLETS DE LA BARRE DU BAS
+   ------------------------------------------------------------------
+   Chaque onglet porte son message dans l'attribut data-msg du HTML :
+   il n'y a donc rien à recopier ici quand on en ajoutera un.
+   ================================================================== */
+document.querySelectorAll('.onglet[data-msg]').forEach(function(onglet){
+  onglet.addEventListener('click', function(){ info(onglet.dataset.msg); });
+});
+
+/* ==================================================================
+   6. LE COMPTEUR DE VISITES
+   ------------------------------------------------------------------
+   Exemple concret : c'est la 1re fois que la personne ouvre l'appli,
+   la ligne du bas affiche « Première visite ». À la 4e ouverture,
+   elle affichera « 4e visite sur cet appareil ».
+   Aucune donnée personnelle : juste un nombre.
+   ================================================================== */
+const visites = local.lire('visites', 0) + 1;
+local.ecrire('visites', visites);
+
+document.getElementById('visites').textContent =
+  visites === 1 ? 'Première visite — bienvenue !' : visites + 'ᵉ visite sur cet appareil';
+</script>
+</body>
+</html>
