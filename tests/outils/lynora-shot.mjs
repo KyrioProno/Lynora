@@ -76,6 +76,24 @@ const demo = await page.evaluate(async (b64) => {
     if (avecPhoto) corps.media = await envoyerPhoto();
     resultats.push(compte + ' : ' + ((await poste('/api/posts', corps)).error || 'créé'));
   }
+  // Un look complet : un cabas, des baskets, un rouge à lèvres et un parfum.
+  await connecter('Camille');
+  const photos = await envoyerPhoto();
+  const pieces = [];
+  for (const corps of [
+    { name: 'Cabas en cuir', brand: 'Atelier Test', category: 'Mode', price: 120, image: photos[0] },
+    { name: 'Baskets blanches', brand: 'Maison Test', category: 'Chaussures & sacs', price: 75, image: photos[0] }
+  ]) {
+    const creation = await poste('/api/products', corps);
+    if (creation.product) { pieces.push(creation.product.id); continue; }
+    pieces.push((await json('/api/products?q=' + encodeURIComponent(corps.name))).products?.[0]?.id);
+  }
+  const rouge = (await poste('/api/products', { name: 'Rouge à lèvres mat', brand: 'Atelier Test', category: 'Maquillage', price: 22 })).product;
+  if (rouge) pieces.push(rouge.id);
+  pieces.push(produits.soins, produits.parfum);
+  let look = (await json('/api/posts?author=' + (await json('/api/me')).user?.id)).posts?.find(p => p.type === 'look');
+  if (!look) look = (await poste('/api/posts', { type: 'look', category: 'Mode', caption: 'Ma tenue du jour : le cabas en cuir, les baskets blanches, mon rouge à lèvres mat et le sérum qui finit la routine.', productIds: pieces, media: photos })).post;
+
   // Une liste partagée par Camille, avec les deux produits déjà créés.
   await connecter('Camille');
   let liste = (await json('/api/me/collections')).collections?.find(l => l.title === 'Ma routine du matin');
@@ -83,7 +101,7 @@ const demo = await page.evaluate(async (b64) => {
     liste = (await poste('/api/collections', { title: 'Ma routine du matin', description: 'Les produits que j’utilise chaque matin, du sérum au parfum.', visibility: 'public' })).collection;
     for (const produit of [produits.soins, produits.parfum]) await poste('/api/collections/' + liste.id + '/items', { productId: produit });
   }
-  return { produits, avis: resultats, liste: liste?.id, listeTitre: liste?.title };
+  return { produits, avis: resultats, liste: liste?.id, listeTitre: liste?.title, look: look?.id, lookPieces: look?.pieces?.length || pieces.filter(Boolean).length };
 }, photo);
 console.log('[app] produits :', JSON.stringify(demo.produits), '| avis :', JSON.stringify(demo.avis), '| liste :', demo.liste);
 
@@ -112,6 +130,64 @@ if (demo.liste) {
   await page.screenshot({ path: sortie + '/5-liste.png' });
   console.log('[app] liste partagée :', demo.listeTitre, '| titre de l’aperçu :', await page.title());
 }
+
+// --- 5b) Le look publié : la liste des pièces renvoie vers chaque fiche produit ---
+if (demo.look) {
+  await page.goto(BASE + '/publication/' + demo.look, { waitUntil: 'networkidle2' });
+  await pause(900);
+  await page.evaluate(() => document.querySelector('.pieces-section')?.scrollIntoView({ block: 'start' }));
+  await pause(500);
+  await page.screenshot({ path: sortie + '/5b-look-pieces.png' });
+  const cartes = await page.$$eval('.piece-card strong', els => els.map(e => e.textContent));
+  console.log('[app] pièces du look :', JSON.stringify(cartes));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await pause(400);
+  await page.screenshot({ path: sortie + '/5c-look-publication.png' });
+}
+
+// --- 5d) Sur une fiche produit : « Vu dans ces looks » ---
+if (demo.produits.soins) {
+  await page.goto(BASE + '/produit/' + demo.produits.soins, { waitUntil: 'networkidle2' });
+  await pause(900);
+  const railPresent = await page.evaluate(() => {
+    const section = document.querySelector('.looks-section');
+    section?.scrollIntoView({ block: 'start' });
+    return !!section;
+  });
+  await pause(500);
+  await page.screenshot({ path: sortie + '/5d-produit-dans-les-looks.png' });
+  console.log('[app] section « vu dans ces looks » :', railPresent);
+}
+
+// --- 5e) Le composeur de look dans l'écran de création ---
+await page.goto(BASE + '/creer', { waitUntil: 'networkidle2' });
+await pause(800);
+const choixLook = await page.evaluate(() => {
+  const format = [...document.querySelectorAll('.format-grid button')].find(b => b.textContent.trim() === 'Look complet');
+  if (!format) return false;
+  format.click();
+  return true;
+});
+await pause(500);
+await page.evaluate(() => document.querySelector('.pieces-picker')?.scrollIntoView({ block: 'center' }));
+await pause(400);
+await page.screenshot({ path: sortie + '/5e-creer-look.png' });
+// On cherche une pièce et on l'ajoute pour montrer le fonctionnement réel
+const ajoutPiece = await page.evaluate(async () => {
+  const champ = document.querySelector('.pieces-picker input');
+  if (!champ) return 'champ introuvable';
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  setter.call(champ, 'Cabas');
+  champ.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 700));
+  const bouton = document.querySelector('.pieces-picker .product-matches button');
+  if (!bouton) return 'aucun résultat';
+  bouton.click();
+  return 'pièce ajoutée';
+});
+await pause(500);
+await page.screenshot({ path: sortie + '/5f-look-piece-ajoutee.png' });
+console.log('[app] composeur de look :', choixLook, '|', ajoutPiece, '| pièces affichées :', await page.$$eval('.piece-chip strong', els => els.map(e => e.textContent)));
 
 // --- 6) Feuille « Ajouter à une liste » depuis une fiche produit ---
 if (demo.produits.parfum) {

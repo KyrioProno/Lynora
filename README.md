@@ -44,7 +44,18 @@ Tests exécutés : `npm test` (parcours API complet : inscription, avis, photos 
 - **Compteurs réels** : le nombre de produits et les notes affichés sont calculés à partir de la base.
 - **Test** : un test couvre la visibilité, les permissions (403 pour autrui), le refus des doublons, la note agrégée et la suppression en cascade.
 
-**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : collection de looks (fonction 2) · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
+### Collections de looks (Fonction 2, livrée le 13/10/2026)
+
+Un look rassemble plusieurs produits **de catégories différentes** — un cabas, des baskets, un rouge à lèvres, un sérum et un parfum — et chaque pièce renvoie vers sa propre fiche produit.
+
+- **Base de données** : table `post_products` (publication, produit, position). La clé (publication, produit) empêche de ranger deux fois la même pièce. Suppression en cascade : retirer un produit du catalogue nettoie aussi les looks qui l'utilisaient.
+- **Formats concernés** : `look`, `tenue` et `comparaison`. Un avis garde un seul produit noté : les pièces ne s'appliquent pas à lui, et les pièces envoyées avec un avis sont ignorées.
+- **Règles serveur** : 12 pièces maximum, doublons ignorés silencieusement, pièce inexistante refusée (404), au moins une pièce pour un look publié et **au moins deux pour une comparaison**. Les brouillons restent enregistrables incomplets.
+- **Écrans** : dans « Créer », l'étape 03 devient « Compose ton look » avec recherche de pièces et liste où l'on retire une pièce ; sur la page d'une publication, une section « Les pièces du look » liste chaque produit avec sa catégorie, sa marque et son prix, cliquable vers la fiche ; sur une fiche produit, une section « Vu dans ces looks » montre les publications qui l'utilisent.
+- **Partage** : l'aperçu d'un look annonce ses pièces (« Un look en 5 pièces : Cabas en cuir, Baskets blanches… »).
+- **Test** : ordre et doublons des pièces, avis sans pièces, comparaison à un seul produit refusée, brouillon incomplet accepté, fiche produit qui retrouve ses looks, modification par autrui refusée (403).
+
+**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : défis communautaires (fonction 3) · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
 
 ### Critères par catégorie (étape livrée le 13/10/2026)
 

@@ -47,3 +47,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY, owner_i
 CREATE TABLE IF NOT EXISTS collection_items (collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, added_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(collection_id, product_id));
 CREATE INDEX IF NOT EXISTS collections_owner ON collections(owner_id, id DESC);
 CREATE INDEX IF NOT EXISTS collection_items_liste ON collection_items(collection_id, position, added_at);`);
+
+/* Les pièces d'un look (Fonction 2 du cahier des charges).
+   Un look (« look », « tenue », « comparaison ») peut rassembler plusieurs
+   produits de catégories différentes : maquillage, vêtements, chaussures,
+   accessoires, parfum. Chaque produit garde sa fiche, vers laquelle on
+   renvoie. post_id + product_id forment la clé : impossible de ranger deux
+   fois la même pièce dans un look. Les suppressions en cascade évitent
+   toute ligne orpheline si un compte ou un produit disparaît. */
+db.exec(`CREATE TABLE IF NOT EXISTS post_products (post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(post_id, product_id));
+CREATE INDEX IF NOT EXISTS post_products_look ON post_products(post_id, position);
+CREATE INDEX IF NOT EXISTS post_products_piece ON post_products(product_id);`);

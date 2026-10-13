@@ -194,3 +194,81 @@ test('listes partageables : visibilité, permissions et rangement', async () => 
     assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: b.cookie })).data.collections.length, 0);
   } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
 });
+
+/* ============================================================
+   LES PIÈCES D'UN LOOK (Fonction 2)
+   Un look rassemble plusieurs produits, de catégories différentes.
+   Ce test vérifie ce qui doit rester vrai : les pièces sont bien
+   enregistrées dans l'ordre, une comparaison exige deux produits,
+   une pièce inventée est refusée, et la fiche produit retrouve les
+   looks qui l'utilisent.
+   ============================================================ */
+test('les pièces d’un look : composition, ordre et limites', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-looks-'));
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'look-a@example.fr', username: 'Lina', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'look-b@example.fr', username: 'Noa', password: 'un-autre-mot-de-passe' } });
+    // Une pièce de chaque univers : sac, chaussures, maquillage et parfum.
+    const sac = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Cabas en cuir', brand: 'Maison Test', category: 'Mode', price: 120 } })).data.product.id;
+    const baskets = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Baskets blanches', brand: 'Maison Test', category: 'Chaussures & sacs', price: 75 } })).data.product.id;
+    const rouge = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Rouge à lèvres mat', brand: 'Atelier Test', category: 'Maquillage', price: 22 } })).data.product.id;
+
+    // 1. Un look avec quatre pièces, dans un ordre précis
+    const look = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma tenue du jour : un cabas, des baskets, un rouge à lèvres et mon parfum préféré.', productIds: [sac, baskets, rouge, sac] } });
+    assert.equal(look.status, 201, JSON.stringify(look.data));
+    assert.deepEqual(look.data.post.pieces.map(x => x.id), [sac, baskets, rouge]);   // doublon ignoré, ordre conservé
+    assert.deepEqual(look.data.post.pieces.map(x => x.category), ['Mode', 'Chaussures & sacs', 'Maquillage']);
+    assert.equal(look.data.post.pieces[0].name, 'Cabas en cuir');
+
+    // 2. Un avis ne prend pas de pièces : il garde son produit noté
+    const avis = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'avis', category: 'Maquillage', caption: 'Une couleur intense qui tient bien la journée.', productId: rouge, rating: 5, productIds: [sac, baskets] } });
+    assert.equal(avis.status, 201);
+    assert.deepEqual(avis.data.post.pieces, []);
+    assert.equal(avis.data.post.product_id, rouge);
+
+    // 3. Une comparaison demande au moins deux produits
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'comparaison', category: 'Mode', caption: 'Les deux sacs comparés un par un.', productIds: [sac] } })).status, 400);
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'comparaison', category: 'Mode', caption: 'Les deux sacs comparés un par un.', productIds: [sac, baskets] } })).status, 201);
+
+    // 4. Un look sans pièce est refusé, et une pièce inventée aussi
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look sans aucune pièce à montrer.' } })).status, 400);
+    assert.equal((await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look avec une pièce qui n’existe pas.', productIds: [9999] } })).status, 404);
+    // Un brouillon reste enregistrable incomplet : on peut ranger son idée et la finir plus tard
+    const brouillon = await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: '', draft: true, productIds: [sac] } });
+    assert.equal(brouillon.status, 201);
+    assert.equal(brouillon.data.post.draft, true);
+
+    // 5. La fiche produit retrouve les looks qui l'utilisent
+    // Le sac apparaît dans le look ET dans la comparaison : deux publications.
+    const fiche = await requete('/products/' + sac);
+    assert.equal(fiche.data.looks.length, 2);
+    assert.ok(fiche.data.looks.some(l => l.id === look.data.post.id));
+    const publication = fiche.data.looks.find(l => l.id === look.data.post.id);
+    assert.equal(publication.username, 'Lina');
+    assert.equal(publication.pieces.length, 3);
+    assert.equal((await requete('/products/' + rouge)).data.looks.length, 1);      // seulement le look (l'avis ne compte pas)
+    assert.equal((await requete('/products/' + baskets)).data.looks.length, 2);   // le look et la comparaison
+
+    // 6. Modifier le look remplace vraiment ses pièces
+    const modif = await requete('/posts/' + look.data.post.id, { method: 'PATCH', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma tenue du jour, version soirée avec seulement deux pièces.', productIds: [rouge, sac] } });
+    assert.equal(modif.status, 200);
+    assert.deepEqual(modif.data.post.pieces.map(x => x.id), [rouge, sac]);
+    assert.equal((await requete('/products/' + baskets)).data.looks.length, 1);   // la comparaison, plus le look
+
+    // 7. Personne d'autre ne peut modifier ce look
+    assert.equal((await requete('/posts/' + look.data.post.id, { method: 'PATCH', cookie: b.cookie, body: { type: 'look', category: 'Mode', caption: 'Je modifie le look de quelqu’un d’autre.', productIds: [baskets] } })).status, 403);
+    // Et un look d'autrui reste visible : c'est le principe du partage
+    assert.equal((await requete('/posts/' + look.data.post.id, { cookie: b.cookie })).status, 200);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
