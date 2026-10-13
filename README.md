@@ -32,6 +32,18 @@ Tests exécutés : `npm test` (parcours API complet : inscription, avis, photos 
 
 **Déjà fonctionnel** : écran de bienvenue (logo, « Ton style, ta communauté », Commencer, Se connecter, exploration sans compte) · inscription/connexion/déconnexion avec bcrypt, cookie HttpOnly + SameSite, sessions persistantes, limitation de débit (4 règles) · fil paginé par curseur, recherche produits/marques/personnes/publications, filtres (catégorie, marque, prix, note, tri) · création de produits avec détection de doublons (409) · photos WebP via sharp, accès privé aux médias non publiés · avis avec note globale, critères par catégorie, prix payé, photos · fil, likes, commentaires et réponses, « avis utile », abonnements, favoris, notifications, signalements, brouillons, édition et suppression · fiche produit avec note moyenne réelle, nombre d'avis, **indicateur « Est-ce que ça vaut son prix ? »** (fonction 1) · profils, bio, intérêts, visibilité des favoris · partage natif avec métadonnées Open Graph et liens profonds (`/produit/:id`, `/publication/:id`, `/profil/:id`) · PWA installable, en-têtes helmet, thème sombre prune/rose fidèle aux références.
 
+### Listes partageables (Fonction 4, livrée le 13/10/2026)
+
+« Ma routine quotidienne », « Mes produits préférés », « À tester », « Mes indispensables petit prix » : chaque personne peut ranger des produits dans des listes et partager un lien vers elles.
+
+- **Base de données** : `collections` (propriétaire, titre, description, visibilité) et `collection_items` (produits rangés, avec leur ordre). Suppressions en cascade : retirer un produit du catalogue ou fermer un compte ne laisse jamais de ligne orpheline.
+- **API** : `GET/POST /api/collections`, `GET /api/me/collections`, `GET /api/users/:id/collections`, `GET/PATCH/DELETE /api/collections/:id`, `POST/DELETE /api/collections/:id/items`. Limites : 30 listes par personne, 60 produits par liste.
+- **Confidentialité** : une liste privée n'est lisible que par son propriétaire (403 pour tout le monde, y compris les membres connectés), et seul le propriétaire peut la modifier ou la supprimer.
+- **Écrans** : onglet « Listes » du profil (avec création et suggestions), page `/liste/:id` (modifier, rendre publique ou privée, retirer un produit, supprimer), et feuille « Ajouter à une liste » depuis chaque fiche produit, qui indique par une coche les listes où le produit est déjà rangé.
+- **Partage** : le lien `/liste/:id` produit un aperçu (titre, auteur, nombre de produits, première photo) pour les réseaux sociaux. Les listes privées gardent l'aperçu générique : rien ne fuite.
+- **Compteurs réels** : le nombre de produits et les notes affichés sont calculés à partir de la base.
+- **Test** : un test couvre la visibilité, les permissions (403 pour autrui), le refus des doublons, la note agrégée et la suppression en cascade.
+
 **Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : collection de looks (fonction 2) · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
 
 ### Critères par catégorie (étape livrée le 13/10/2026)
@@ -64,10 +76,12 @@ Tests exécutés : `npm test` (parcours API complet : inscription, avis, photos 
 ## Vérifier
 
 ```bash
-npm test       # parcours API sur une base temporaire : auth, avis, upload, stats, permissions, interactions
+npm test       # 4 tests sur des bases temporaires : parcours social complet, critères par catégorie, listes partageables
 npm run build  # compilation de l'interface
 npm audit --omit=dev
 ```
+
+Vérification visuelle (facultative, hors application livrée) : `npm install --no-save @sparticuz/chromium puppeteer-core`, démarrer `npm start`, puis `node tests/outils/lynora-shot.mjs`. Le script crée des données de démonstration par l'API publique, visite chaque écran dans un vrai Chromium et écrit les captures dans `captures/lynora/`. Il est rejouable : les éléments déjà créés sont réutilisés.
 
 ## Limites avant commercialisation
 
