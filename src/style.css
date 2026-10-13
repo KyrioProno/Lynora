@@ -224,3 +224,19 @@
 .modo-journal{margin:10px 0 0;font-size:10.5px;color:var(--muted)}
 /* Une carte sans photo reste compacte : pas de grand cadre vide. */
 .modo-carte:not(:has(.modo-media)) .modo-corps{padding-top:15px}
+
+/* ============================================================
+   ACCÈS PRIVÉ — écran de code quand l'hébergement est réservé
+   ============================================================ */
+.acces-prive{display:grid;place-items:center;padding:26px 22px calc(26px + env(safe-area-inset-bottom))}
+.acces-carte{width:100%;max-width:400px;background:linear-gradient(155deg,#221a26,#17141c);border:1px solid #3f3243;border-radius:22px;padding:28px 24px}
+.acces-carte .eyebrow{display:inline-flex;align-items:center;gap:7px}
+.acces-carte h1{font-family:Georgia,"Times New Roman",serif;font-size:29px;font-weight:400;letter-spacing:-.045em;line-height:1.1;margin:14px 0 12px}
+.acces-carte h1 em{font-style:italic;color:var(--pink)}
+.acces-carte p{font-size:12.5px;line-height:1.6}
+.acces-carte form{display:flex;flex-direction:column;gap:11px;margin:22px 0 0}
+.acces-carte input{background:#1b1721;border:1px solid #4b3c50;border-radius:13px;color:#fff;padding:14px 15px;font-size:13px;outline:0;min-height:48px}
+.acces-carte input:focus{border-color:var(--pink)}
+.acces-carte .button{min-height:49px;width:100%}
+.acces-carte .form-error{margin-top:13px}
+.acces-note{margin:18px 0 0;font-size:11px;color:var(--muted);line-height:1.55}

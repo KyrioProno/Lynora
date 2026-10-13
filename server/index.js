@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import sharp from 'sharp';
 import bcrypt from 'bcryptjs';
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
+import { randomBytes, createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { db, get, all, run, transaction, productKey } from './db.js';
@@ -48,6 +48,42 @@ const mediaOk = url => typeof url === 'string' && /^\/uploads\/[a-f0-9-]{36}\.we
 const cookie = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('lynora_session='))?.split('=')[1];
 const tokenHash = t => createHash('sha256').update(t).digest('hex');
 app.use(['/api','/uploads'], (req,res,next) => { const token = cookie(req); if (token) { const row = get('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at > ?', tokenHash(token), Date.now()); req.user = row || null; } next(); });
+/* ============================================================
+   ACCÈS PRIVÉ (facultatif)
+   ------------------------------------------------------------
+   Par défaut, Lynora est ouverte à qui connaît l'adresse. Pour la
+   garder pour soi, il suffit de définir un code au démarrage :
+
+       LYNORA_ACCESS_CODE="mon-code-secret" npm start
+
+   Sans ce code, aucune donnée ne sort : ni pages d'API, ni images
+   envoyées. Le navigateur reçoit alors l'écran « Accès privé ».
+   Le cookie d'accès ne contient pas le code, mais son empreinte :
+   changer le code déconnecte donc tout le monde d'un coup.
+   ============================================================ */
+const codeAcces = (process.env.LYNORA_ACCESS_CODE || '').trim();
+const jetonAcces = codeAcces ? createHash('sha256').update('lynora-acces:' + codeAcces).digest('hex') : '';
+const cookieAcces = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('lynora_acces='))?.split('=')[1];
+const memeTexte = (a, b) => timingSafeEqual(createHash('sha256').update(String(a)).digest(), createHash('sha256').update(String(b)).digest());
+const jetonValide = valeur => !!jetonAcces && !!valeur && memeTexte(jetonAcces, valeur);
+const accesLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Trop de tentatives. Réessaie dans quelques minutes.' } });
+const accesOuvert = req => !codeAcces || jetonValide(cookieAcces(req));
+app.get('/api/access',(req,res)=>res.json({needed:!!codeAcces,ok:accesOuvert(req)}));
+app.post('/api/access',accesLimiter,(req,res)=>{
+  if(!codeAcces)return res.json({ok:true,needed:false});
+  const saisi=text(req.body.code,200);
+  if(!saisi||!memeTexte(saisi,codeAcces))return fail(res,401,'Code incorrect.');
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https' || req.get('origin')?.startsWith('https:');
+  res.cookie('lynora_acces',jetonAcces,{ httpOnly:true, secure:!!secure, sameSite:'lax', path:'/', maxAge:180*86400_000 });
+  res.json({ok:true,needed:true});
+});
+app.post('/api/access/sortir',(req,res)=>{ res.clearCookie('lynora_acces',{path:'/',sameSite:'lax'}); res.json({ok:true}); });
+// La serrure : rien ne passe sans le cookie, sauf les deux adresses ci-dessus.
+app.use(['/api','/uploads'],(req,res,next)=>{
+  if(!codeAcces || req.originalUrl.startsWith('/api/access'))return next();
+  if(jetonValide(cookieAcces(req)))return next();
+  res.status(401).json({error:'Accès privé : ce Lynora est réservé. Saisis le code d’accès.',access:true});
+});
 app.get('/uploads/:file',(req,res)=>{
   const url='/uploads/'+req.params.file;
   if(!mediaOk(url))return fail(res,404,'Image introuvable.');

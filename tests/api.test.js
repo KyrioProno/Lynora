@@ -485,3 +485,54 @@ test('modération : signaler, masquer, rétablir, et pas d’auto-promotion', as
     assert.equal((await requete('/moderation/reports/' + nouveauSignalement.id, { method: 'POST', cookie: modo.cookie, body: { action: 'supprimer-tout' } })).status, 400);
   } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
 });
+
+/* ============================================================
+   ACCÈS PRIVÉ (facultatif)
+   Le serveur démarre ici avec un code (LYNORA_ACCESS_CODE) : plus
+   rien ne doit sortir — ni publications, ni comptes, ni photos —
+   avant que le code ait été saisi. C'est ce que vérifie ce test.
+   ============================================================ */
+test('accès privé : rien ne sort sans le code, et le code ouvre l’accès', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-acces-'));
+  const port = 46000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}`;
+  const code = 'le-code-privé-de-test-2026';
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port), LYNORA_ACCESS_CODE: code }, stdio: ['ignore', 'pipe', 'pipe'] });
+  serveur.stderr.on('data', d => process.stderr.write(d));
+  serveur.stdout.on('data', d => process.stderr.write(d));
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json().catch(() => ({})), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/api/access')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+
+    // 1. Sans code : l'application annonce qu'elle est réservée, et l'API ne répond rien
+    const etat = await requete('/api/access');
+    assert.deepEqual({ needed: etat.data.needed, ok: etat.data.ok }, { needed: true, ok: false });
+    for (const chemin of ['/api/posts', '/api/me', '/api/products', '/api/notifications', '/api/challenges', '/api/moderation/reports']) {
+      const refus = await requete(chemin, { cookie: '' });
+      assert.equal(refus.status, 401, chemin + ' doit être fermé sans code');
+      assert.equal(refus.data.access, true);
+    }
+    // 2. La page d'accueil reste servie (c'est l'écran de code qui s'affiche)
+    assert.equal((await fetch(base + '/accueil')).status, 200);
+    // 3. Impossible de contourner en se connectant : même l'authentification est fermée
+    assert.equal((await requete('/api/auth/login', { method: 'POST', body: { email: 'quiconque@example.fr', password: 'un-mot-de-passe' } })).status, 401);
+    assert.equal((await requete('/api/auth/register', { method: 'POST', body: { email: 'quiconque@example.fr', username: 'Quelqu’un', password: 'un-mot-de-passe' } })).status, 401);
+    // 4. Un code faux est refusé, sans cookie
+    const faux = await requete('/api/access', { method: 'POST', body: { code: 'code-au-hasard' } });
+    assert.equal(faux.status, 401);
+    assert.equal(faux.cookie, undefined);
+    // 5. Le bon code ouvre l'accès, et le cookie suffit ensuite
+    const bon = await requete('/api/access', { method: 'POST', body: { code } });
+    assert.equal(bon.status, 200);
+    assert.ok(bon.cookie?.startsWith('lynora_acces='), 'le cookie d’accès doit être posé');
+    assert.equal((await requete('/api/posts', { cookie: bon.cookie })).status, 200);
+    assert.equal((await requete('/api/access', { cookie: bon.cookie })).data.ok, true);
+    // 6. Avec l'accès, l'application fonctionne normalement (compte de test créé puis publication)
+    const inscription = await requete('/api/auth/register', { method: 'POST', cookie: bon.cookie, body: { email: 'prive@example.fr', username: 'Privé', password: 'un-mot-de-passe-solide' } });
+    assert.equal(inscription.status, 201);
+    assert.equal(inscription.data.user.role, 'member');
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});

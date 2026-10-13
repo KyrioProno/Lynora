@@ -4,9 +4,17 @@ export async function api(path, options = {}) {
   try { response = await fetch('/api' + path, { credentials:'same-origin', ...options, headers:{...headers,...options.headers}, body: options.body instanceof FormData ? options.body : options.body ? JSON.stringify(options.body) : undefined }); }
   catch { throw new Error('Connexion indisponible. Vérifie ton réseau et réessaie.'); }
   const data = await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(data.error || 'Une erreur est survenue.');
+  if(!response.ok){
+    const erreur = new Error(data.error || 'Une erreur est survenue.');
+    // Accès privé : l'application affiche l'écran de code au lieu d'une erreur sèche.
+    if(data.access){ erreur.access = true; window.dispatchEvent(new Event('lynora-acces-requis')); }
+    throw erreur;
+  }
   return data;
 }
+/* Accès privé (facultatif) : le serveur indique s'il attend un code, et le vérifie. */
+export const etatAcces = () => api('/access');
+export const entrerCodeAcces = code => api('/access', { method: 'POST', body: { code } });
 export async function uploadImages(files) {
   if (!files?.length) return [];
   const form = new FormData(); Array.from(files).forEach(f=>form.append('images',f));

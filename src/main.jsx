@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Home, Search, Plus, Heart, Bell, UserRound, ArrowLeft, ArrowRight, Bookmark, MessageCircle, Send, Share2, MoreHorizontal, Star, Crown, Sparkles, Camera, ImagePlus, X, Check, ChevronRight, SlidersHorizontal, PenLine, LogOut, Settings, UsersRound, Package, ListPlus, LoaderCircle, Trash2, Trophy, Target, Vote, Undo2, CalendarClock, ShieldCheck, Flag, EyeOff, RotateCcw, Edit3, Copy, Eye, Menu, RefreshCw, CheckCircle2 } from 'lucide-react';
-import { api, uploadImages, CATEGORIES, FORMATS, criteriaFor, groupesTextes, declarations, formatPrice, formatDate } from './api';
+import { api, uploadImages, CATEGORIES, FORMATS, criteriaFor, groupesTextes, declarations, formatPrice, formatDate, etatAcces, entrerCodeAcces } from './api';
 import './style.css';
 
 const initials = name => (name||'L').slice(0,1).toUpperCase();
@@ -394,14 +394,49 @@ function ModerationScreen({me,go,notify}){
   </main>;
 }
 
+/* ============================================================
+   ACCÈS PRIVÉ
+   ------------------------------------------------------------
+   Affiché seulement si le serveur a été démarré avec un code
+   (LYNORA_ACCESS_CODE). Sans le bon code, aucune donnée n'est
+   accessible : c'est le serveur qui refuse, pas seulement l'écran.
+   ============================================================ */
+function AccesPrive({onEntree}){
+  const [code,setCode]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  async function entrer(e){
+    e.preventDefault(); setBusy(true); setError('');
+    try{ await entrerCodeAcces(code); onEntree(); }
+    catch(err){ setError(err.message); }
+    finally{ setBusy(false); }
+  }
+  return <div className="app-shell acces-prive">
+    <div className="acces-carte">
+      <div className="eyebrow"><ShieldCheck size={13}/> ACCÈS PRIVÉ</div>
+      <h1>Cet espace est <em>réservé.</em></h1>
+      <p className="muted">Saisis le code d’accès pour continuer. C’est le code défini par la personne qui héberge ce Lynora.</p>
+      <form onSubmit={entrer}>
+        <input type="password" value={code} onChange={e=>setCode(e.target.value)} placeholder="Code d’accès" autoComplete="current-password" aria-label="Code d’accès" required/>
+        <button className="button button-primary" disabled={busy||!code.trim()}>{busy?'Vérification...':'Entrer'}<ArrowRight size={17}/></button>
+      </form>
+      {error&&<div className="form-error">{error}</div>}
+      <p className="acces-note">Rien n’est visible sans ce code : ni les publications, ni les photos, ni les comptes.</p>
+    </div>
+  </div>;
+}
+
 function App(){
- const [route,go]=useRoute(); const [me,setMe]=useState(undefined); const [authMode,setAuthMode]=useState(null); const [toast,setToast]=useState(''); const [refresh,setRefresh]=useState(0);
+ const [route,go]=useRoute(); const [acces,setAcces]=useState(undefined); const [me,setMe]=useState(undefined); const [authMode,setAuthMode]=useState(null); const [toast,setToast]=useState(''); const [refresh,setRefresh]=useState(0);
  const notify=useCallback(msg=>{setToast(msg);setTimeout(()=>setToast(''),4000)},[]);
- useEffect(()=>{api('/me').then(x=>setMe(x.user)).catch(()=>setMe(null))},[]);
+ useEffect(()=>{ etatAcces().then(setAcces).catch(()=>setAcces({needed:false,ok:true})); },[]);
+ // Si le cookie d'accès disparaît (ou expire), on revient à l'écran de code.
+ useEffect(()=>{ const requis=()=>setAcces({needed:true,ok:false}); window.addEventListener('lynora-acces-requis',requis); return ()=>window.removeEventListener('lynora-acces-requis',requis); },[]);
+ useEffect(()=>{ if(acces?.needed&&!acces.ok)setMe(null); else api('/me').then(x=>setMe(x.user)).catch(()=>setMe(null)) },[acces]);
  const reload=()=>setRefresh(v=>v+1);
  const gate=fn=>{if(!me){setAuthMode('login');notify('Connecte-toi pour participer à la communauté.');return}fn()};
  const action=async(path,body)=>{if(!me){setAuthMode('login');return null}try{const result=await api(path,{method:'POST',body});reload();return result}catch(e){notify(e.message);return null}};
  const share=async(path)=>{const url=location.origin+path;try{if(navigator.share)await navigator.share({title:'Découvre sur Lynora',url});else{await navigator.clipboard.writeText(url);notify('Lien copié dans le presse-papiers.')}}catch(e){if(e.name!=='AbortError')notify('Impossible de partager ce lien.')}};
+ if(acces===undefined)return <div className="app-shell"><Loading/></div>;
+ if(acces.needed&&!acces.ok)return <AccesPrive onEntree={()=>setAcces({needed:true,ok:true})}/>;
  if(me===undefined)return <div className="app-shell"><Loading/></div>;
  const isWelcome=route==='/' && !me && !sessionStorage.getItem('lynora_entered');
  const enter=()=>{sessionStorage.setItem('lynora_entered','1');go('/accueil')};

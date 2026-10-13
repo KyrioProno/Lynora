@@ -68,6 +68,22 @@ Une personne propose un défi (« Un look complet à 50 € », « Ma routine du
 
 **Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : console de modération des signalements · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
 
+### Accès privé (livré le 13/10/2026)
+
+Pour garder Lynora **rien que pour soi** tout en l'hébergeant en ligne, il suffit de définir un code au démarrage :
+
+```bash
+LYNORA_ACCESS_CODE="le-code-que-tu-choisis" npm start
+```
+
+- Sans ce code, une visite arrive sur l'écran **« Cet espace est réservé »** : ni publications, ni photos, ni comptes.
+- La protection est faite **par le serveur** : chaque adresse de l'API et chaque image envoyée répond `401` tant que le code n'a pas été saisi. Cacher l'écran ne suffirait pas ; ici, aucune donnée ne sort.
+- Le code correct est mémorisé par un cookie `HttpOnly` valable 180 jours : on ne le retape pas à chaque visite. **Changer le code déconnecte immédiatement tout le monde.**
+- Douze tentatives par quart d'heure et par adresse IP, comme pour la connexion.
+- Sans `LYNORA_ACCESS_CODE`, l'application reste ouverte comme avant : la fonction est facultative.
+
+Pour un Lynora **public** (boutique, communauté), ne pas définir cette variable et désactiver la connexion automatique des visiteurs si besoin. Les deux réglages se combinent : `LYNORA_ACCESS_CODE` garde l'ensemble fermé, `LYNORA_MODERATORS` désigne qui traite les signalements.
+
 ### Console de modération (livrée le 13/10/2026)
 
 Les signalements existaient (le menu « … » d'une publication), mais personne ne pouvait les traiter. La console les rend utilisables.
@@ -112,7 +128,7 @@ Le plafond de tentatives d'authentification (20 par quart d'heure et par adresse
 ## Vérifier
 
 ```bash
-npm test       # 6 tests sur des bases temporaires : parcours social, critères, listes partageables, pièces d'un look, défis, modération
+npm test       # 8 tests sur des bases temporaires : parcours social, critères, listes partageables, pièces d'un look, défis, modération, accès privé
 npm run build  # compilation de l'interface
 npm audit --omit=dev
 ```
@@ -129,7 +145,11 @@ Le fichier `railway.json` prépare le build, le démarrage et la vérification d
 
 1. Créer un projet **Deploy from GitHub repo** et choisir `KyrioProno/Lynora`, branche `main`. Railway doit utiliser **un seul service / une seule réplique** pour SQLite.
 2. Ajouter un **volume persistant** au service, monté sur `/data` (un service avec volume peut nécessiter une formule payante selon l'offre Railway). Ne pas monter le volume sur le répertoire du code. Railway fournit automatiquement le chemin à l'application : **aucune variable d'environnement à saisir**. Si le tout premier déploiement échoue avant l'ajout du volume, c'est attendu : relancer le déploiement après l'avoir attaché.
-3. Dans **Settings → Networking**, cliquer sur **Generate Domain**. Ce domaine HTTPS est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
-4. Vérifier `/api/me` (réponse `{"user":null}` avant connexion), créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
+3. Dans **Settings → Networking**, cliquer sur **Generate Domain** (le domaine n'est pas indexé : rien ne le référence publiquement). Ce domaine HTTPS est l'URL de Lynora ; les liens de produits et publications utilisent la même origine.
+4. Dans **Variables**, ajouter les réglages utiles pour un Lynora privé :
+   - `LYNORA_ACCESS_CODE` = le code d'accès de ton choix (l'application n'est alors visible que pour toi) ;
+   - `LYNORA_MODERATORS` = ton adresse e-mail, si tu veux la console de modération ;
+   - `LYNORA_AUTH_LIMIT` (facultatif) : plafond de tentatives de connexion, 20 par défaut.
+5. Vérifier `/api/access` (réponse `{"needed":true,"ok":false}` tant que le code n'a pas été saisi), puis ouvrir le domaine : l'écran « Accès privé » doit apparaître. Saisir le code, créer un compte et publier une image. Redéployer pour vérifier que le compte et l'image sont conservés.
 
 **Ne pas déployer sans volume** : une base SQLite et des photos sur le disque éphémère seraient perdues lors d'un redéploiement. Prévoir des sauvegardes du volume, une politique de confidentialité et une modération avant d'ouvrir l'application au public. Le domaine temporaire de prévisualisation Arena (`*.e2b.app`) n'est pas un hébergement permanent.
