@@ -68,6 +68,20 @@ Une personne propose un défi (« Un look complet à 50 € », « Ma routine du
 
 **Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : console de modération des signalements · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
 
+### Console de modération (livrée le 13/10/2026)
+
+Les signalements existaient (le menu « … » d'une publication), mais personne ne pouvait les traiter. La console les rend utilisables.
+
+- **Qui est modérateur** : la liste vient du **serveur**, jamais de l'application. Au démarrage, les comptes dont l'adresse figure dans `LYNORA_MODERATORS` (adresses séparées par des virgules) reçoivent le rôle. Exemple : `LYNORA_MODERATORS="camille@exemple.fr,romy@exemple.fr" npm start`. Sans cette variable, personne n'est modérateur et la console reste inaccessible — c'est volontaire : le rôle ne peut pas s'obtenir depuis l'interface, et une modification de profil ne le change pas.
+- **Trois onglets** : « À traiter » (signalements ouverts, avec le contenu visé, sa ou son auteur, la personne qui a signalé et son motif), « Traités » (qui a décidé quoi, et quand) et « Masqués » (les contenus retirés, avec un bouton **Rétablir**).
+- **Masquer** ne supprime rien : le contenu disparaît des fils, des profils, des fiches produit et des participations aux défis, **et son auteur reçoit une notification**. Sa ou son auteur continue de le voir, avec un bandeau explicatif ; la modération aussi. Tout est réversible.
+- **Classer sans suite** laisse le contenu en ligne et prévient la personne qui a signalé.
+- Un membre qui tente d'ouvrir la console reçoit une réponse `403` ; la page « Paramètres » ne montre l'entrée « Modération » qu'aux comptes concernés.
+
+API : `GET /api/moderation/reports?status=open|resolved`, `POST /api/moderation/reports/:id` (`action: hide | dismiss`), `GET /api/moderation/hidden`, `POST /api/moderation/posts/:id/visibility` (`hidden: false` pour rétablir).
+
+Le plafond de tentatives d'authentification (20 par quart d'heure et par adresse IP) protège l'application ; il est réglable pour un hébergement partagé (atelier, même box) avec `LYNORA_AUTH_LIMIT`, par exemple `LYNORA_AUTH_LIMIT=300 npm start`.
+
 ### Critères par catégorie (étape livrée le 13/10/2026)
 
 `shared/criteres.js` est désormais **la table unique** utilisée à la fois par l'interface et par le serveur : impossible que les deux divergent.
@@ -98,7 +112,7 @@ Une personne propose un défi (« Un look complet à 50 € », « Ma routine du
 ## Vérifier
 
 ```bash
-npm test       # 4 tests sur des bases temporaires : parcours social complet, critères par catégorie, listes partageables
+npm test       # 6 tests sur des bases temporaires : parcours social, critères, listes partageables, pièces d'un look, défis, modération
 npm run build  # compilation de l'interface
 npm audit --omit=dev
 ```
@@ -107,7 +121,7 @@ Vérification visuelle (facultative, hors application livrée) : `npm install --
 
 ## Limites avant commercialisation
 
-C'est un socle fonctionnel et non une plateforme entièrement commercialisable : pas de vérification d'adresse e-mail, récupération de mot de passe, console de modération, traitement humain des signalements, suppression de compte, outils anti-abus avancés ni sauvegardes automatiques. Les signalements sont conservés en base, sans tableau de modération pour le moment. Les défis, collections partageables avancées, conversations privées et association de plusieurs produits à un look ne sont pas encore implémentés. Les recommandations actuelles utilisent les intérêts déclarés ; elles peuvent être désactivées dans les paramètres. Pour une production publique, configurer HTTPS, sauvegardes, surveillance, politique de confidentialité, traitement RGPD, vérification e-mail et stockage d'objets pérenne. Aucun service externe ni clé API n'est nécessaire en local.
+C'est un socle fonctionnel et non une plateforme entièrement commercialisable : pas de vérification d'adresse e-mail, récupération de mot de passe, suppression de compte ni d'export des données personnelles, outils anti-abus avancés ou sauvegardes automatiques. La console de modération existe mais elle est manuelle : elle demande une personne de confiance, inscrite dans `LYNORA_MODERATORS`, et rien n'est envoyé par e-mail (aucun service externe n'est branché). Les défis, collections partageables avancées, conversations privées et association de plusieurs produits à un look ne sont pas encore implémentés. Les recommandations actuelles utilisent les intérêts déclarés ; elles peuvent être désactivées dans les paramètres. Pour une production publique, configurer HTTPS, sauvegardes, surveillance, politique de confidentialité, traitement RGPD, vérification e-mail et stockage d'objets pérenne. Aucun service externe ni clé API n'est nécessaire en local.
 
 ## Déploiement avec URL permanente (Railway)
 

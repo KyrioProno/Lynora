@@ -384,3 +384,104 @@ test('défis communautaires : participations, votes et fins de défi', async () 
     assert.equal((await requete('/posts/' + lookMaya.id)).status, 200);
   } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
 });
+
+/* ============================================================
+   MODÉRATION (sécurité de la communauté)
+   Ce test vérifie la promesse la plus importante : une personne
+   ordinaire ne peut pas se donner les droits de modération, un
+   contenu masqué disparaît partout où il était visible, et son
+   auteur est prévenu. Il vérifie aussi qu'on peut rétablir.
+   ============================================================ */
+test('modération : signaler, masquer, rétablir, et pas d’auto-promotion', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-modo-'));
+  const port = 45000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  // Le rôle de modérateur vient d'une variable d'environnement du serveur,
+  // jamais de l'application : c'est ce que l'on vérifie ici.
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port), LYNORA_MODERATORS: 'modo@example.fr' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const modo = await requete('/auth/register', { method: 'POST', body: { email: 'modo@example.fr', username: 'Romy', password: 'un-mot-de-passe-solide' } });
+    const membre = await requete('/auth/register', { method: 'POST', body: { email: 'membre@example.fr', username: 'Théo', password: 'un-autre-mot-de-passe' } });
+    const autre = await requete('/auth/register', { method: 'POST', body: { email: 'autre@example.fr', username: 'Nina', password: 'un-troisieme-mot-de-passe' } });
+
+    // 1. Le rôle vient du serveur : le compte de la liste est modérateur, pas les autres
+    assert.equal(modo.data.user.role, 'moderator');
+    assert.equal(membre.data.user.role, 'member');
+    // Et personne ne peut se promouvoir soi-même en modifiant son profil
+    await requete('/me', { method: 'PATCH', cookie: membre.cookie, body: { username: 'Théo', bio: '', interests: [], favoritesPublic: false, role: 'moderator' } });
+    assert.equal((await requete('/me', { cookie: membre.cookie })).data.user.role, 'member');
+
+    // 2. Un membre ne peut pas ouvrir la console de modération
+    assert.equal((await requete('/moderation/reports', { cookie: membre.cookie })).status, 403);
+    assert.equal((await requete('/moderation/reports')).status, 401);
+    assert.equal((await requete('/moderation/hidden', { cookie: membre.cookie })).status, 403);
+
+    // 3. Une publication est signalée par une personne, puis la console l'affiche
+    const produit = (await requete('/products', { method: 'POST', cookie: membre.cookie, body: { name: 'Crème litigieuse', brand: 'Maison Test', category: 'Soins', price: 30 } })).data.product.id;
+    const publication = (await requete('/posts', { method: 'POST', cookie: membre.cookie, body: { type: 'avis', category: 'Soins', caption: 'Un avis que d’autres personnes jugent inapproprié, paraît-il.', productId: produit, rating: 2, criteria: { value: 2 } } })).data.post;
+    // Un membre ne peut pas masquer un contenu
+    assert.equal((await requete('/moderation/posts/' + publication.id + '/visibility', { method: 'POST', cookie: membre.cookie, body: {} })).status, 403);
+    await requete('/posts/' + publication.id + '/report', { method: 'POST', cookie: autre.cookie, body: { reason: 'Ce contenu me semble inapproprié.' } });
+    const file = await requete('/moderation/reports?status=open', { cookie: modo.cookie });
+    assert.equal(file.status, 200);
+    assert.equal(file.data.open_count, 1);
+    assert.equal(file.data.reports[0].post_id, publication.id);
+    assert.equal(file.data.reports[0].author_name, 'Théo');
+    assert.equal(file.data.reports[0].reporter_name, 'Nina');
+    assert.equal(file.data.reports[0].hidden, 0);
+    assert.equal(file.data.waiting, true);   // le serveur indique qu'une liste de modérateurs est configurée
+
+    // 4. Masquer : le contenu disparaît partout, l'auteur est prévenu
+    const decision = await requete('/moderation/reports/' + file.data.reports[0].id, { method: 'POST', cookie: modo.cookie, body: { action: 'hide' } });
+    assert.equal(decision.status, 200);
+    assert.equal(decision.data.hidden, true);
+    assert.equal(decision.data.open_count, 0);
+    assert.equal((await requete('/posts')).data.posts.some(p => p.id === publication.id), false);                    // fil
+    assert.equal((await requete('/posts?author=' + membre.data.user.id)).data.posts.length, 0);                       // profil
+    assert.equal((await requete('/products/' + produit)).data.reviews.length, 0);                                    // fiche produit
+    assert.equal((await requete('/products/' + produit)).data.product.review_count, 0);                              // et la note ne compte plus cet avis
+    assert.equal((await requete('/posts/' + publication.id, { cookie: autre.cookie })).status, 404);                 // invisible pour les autres
+    const vuParLAuteur = await requete('/posts/' + publication.id, { cookie: membre.cookie });
+    assert.equal(vuParLAuteur.status, 200);                                                                          // l'auteur garde l'accès
+    assert.equal(vuParLAuteur.data.post.hidden, 1);
+    assert.equal((await requete('/posts/' + publication.id, { cookie: modo.cookie })).status, 200);                  // et la modération aussi
+    const notifications = (await requete('/notifications', { cookie: membre.cookie })).data.notifications;
+    assert.ok(notifications.some(n => n.kind === 'moderation'), 'l’auteur doit être prévenu du masquage');
+
+    // 5. Le signalement est classé, plus rien en attente
+    const classe = await requete('/moderation/reports?status=resolved', { cookie: modo.cookie });
+    assert.equal(classe.data.reports[0].action, 'hide');
+    assert.equal(classe.data.reports[0].resolved_by_name, 'Romy');
+    assert.ok(classe.data.reports[0].resolved_at);
+
+    // 6. Classer sans suite : le contenu reste en ligne, la personne qui a signalé est prévenue
+    const deuxieme = (await requete('/posts', { method: 'POST', cookie: autre.cookie, body: { type: 'conseil', category: 'Beauté', caption: 'Un conseil tout à fait acceptable, mais signalé par prudence.' } })).data.post;
+    await requete('/posts/' + deuxieme.id + '/report', { method: 'POST', cookie: membre.cookie, body: { reason: 'Je me demande si c’est autorisé.' } });
+    const aTraiter = (await requete('/moderation/reports?status=open', { cookie: modo.cookie })).data.reports[0];
+    const sansSuite = await requete('/moderation/reports/' + aTraiter.id, { method: 'POST', cookie: modo.cookie, body: { action: 'dismiss' } });
+    assert.equal(sansSuite.data.hidden, false);
+    assert.equal((await requete('/posts/' + deuxieme.id)).status, 200);
+    assert.ok((await requete('/notifications', { cookie: membre.cookie })).data.notifications.some(n => n.kind === 'report_resolved'), 'la personne qui a signalé doit être prévenue');
+
+    // 7. Les contenus masqués sont listés, et on peut rétablir
+    const masques = await requete('/moderation/hidden', { cookie: modo.cookie });
+    assert.equal(masques.data.hidden_total, 1);
+    assert.equal(masques.data.posts[0].id, publication.id);
+    assert.equal((await requete('/moderation/posts/' + publication.id + '/visibility', { method: 'POST', cookie: modo.cookie, body: { hidden: false } })).data.hidden, false);
+    assert.equal((await requete('/posts')).data.posts.some(p => p.id === publication.id), true);                      // de retour dans le fil
+    assert.equal((await requete('/products/' + produit)).data.product.review_count, 1);                               // et dans la note du produit
+    assert.ok((await requete('/notifications', { cookie: membre.cookie })).data.notifications.some(n => n.kind === 'moderation_restore'));
+
+    // 8. Une action inconnue est refusée proprement
+    const nouveauSignalement = (await requete('/moderation/reports?status=resolved', { cookie: modo.cookie })).data.reports[0];
+    assert.equal((await requete('/moderation/reports/' + nouveauSignalement.id, { method: 'POST', cookie: modo.cookie, body: { action: 'supprimer-tout' } })).status, 400);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});

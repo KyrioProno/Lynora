@@ -6,32 +6,44 @@
    ------------------------------------------------------------
    Utilisation :
      npm install --no-save @sparticuz/chromium puppeteer-core
-     npm start &                       # application compilée sur 3001
+     LYNORA_MODERATORS="moderation@example.fr" npm start &   # l'un des comptes de démonstration est modérateur
      node tests/outils/lynora-shot.mjs
    Sur certaines machines, préfixer par : AWS_LAMBDA_JS_RUNTIME=nodejs22.x
+   Le serveur plafonne les connexions (20 par quart d'heure) : pour enchaîner
+   plusieurs exécutions, démarrer avec LYNORA_AUTH_LIMIT=300.
    ============================================================ */
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:3001';
 const sortie = process.env.SORTIE || '/home/user/Lynora/captures/lynora';
 mkdirSync(sortie, { recursive: true });
 
+// Un profil et un cache neufs à chaque exécution : sans cela, le navigateur peut
+// resservir un ancien index.html et ne plus trouver les fichiers compilés.
+const profil = mkdtempSync(join(tmpdir(), 'lynora-navigateur-'));
 const browser = await puppeteer.launch({
-  args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
+  userDataDir: profil,
+  args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-http-cache'],
   executablePath: await chromium.executablePath(),
   headless: 'shell',
   defaultViewport: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }
 });
 const page = await browser.newPage();
+await page.setCacheEnabled(false);
 const erreurs = [];
 const pause = ms => new Promise(r => setTimeout(r, ms));
 page.on('pageerror', e => erreurs.push('ERREUR JS : ' + e.message));
 // Les 409 sont normaux ici : le script est rejouable, donc le serveur refuse
 // (à raison) les comptes, produits et avis déjà créés lors d'une visite précédente.
+let sondePublique = false;   // vrai pendant les contrôles volontaires « invisible pour le public »
 page.on('response', r => {
-  if (r.status() >= 400 && !(r.status() === 409 && /\/api\/(auth|products|posts|collections|challenges)/.test(r.url())))
+  // 409 : le script est rejouable (doublons), 403 : la membre qui teste la console de modération.
+  const attendu = (r.status() === 409 && /\/api\/(auth|products|posts|collections|challenges)/.test(r.url())) || (r.status() === 403 && r.url().includes('/api/moderation')) || (sondePublique && r.status() === 404);
+  if (r.status() >= 400 && !attendu)
     erreurs.push('HTTP ' + r.status() + ' ' + r.url());
 });
 
@@ -46,18 +58,30 @@ const demo = await page.evaluate(async (b64) => {
   const json = (chemin, options) => fetch(chemin, options).then(async r => ({ ...(await r.json()), _statut: r.status }));
   const poste = (chemin, corps) => json(chemin, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
   const MOT_DE_PASSE = 'mot-de-passe-demo-2026';
-  const personnes = { Camille: 'demo@example.fr', Iris: 'iris@example.fr', Léa: 'lea@example.fr' };
+  const personnes = { Camille: 'demo@example.fr', Iris: 'iris@example.fr', Léa: 'lea@example.fr', Romy: 'moderation@example.fr' };
   for (const [nom, email] of Object.entries(personnes)) {
-    const inscription = await poste('/api/auth/register', { email, username: nom, password: MOT_DE_PASSE });
-    if (inscription._statut !== 201) await poste('/api/auth/login', { email, password: MOT_DE_PASSE });
+    // On crée les comptes si besoin, sans se connecter : les tentatives
+    // d'authentification sont plafonnées par le serveur, autant les économiser.
+    await poste('/api/auth/register', { email, username: nom, password: MOT_DE_PASSE });
   }
-  const connecter = nom => poste('/api/auth/login', { email: personnes[nom], password: MOT_DE_PASSE });
+  // On ne se reconnecte que si la bonne personne n'est pas déjà connectée : cela
+  // économise les tentatives, limitées à 20 par quart d'heure par le serveur.
+  const connecter = async nom => {
+    const moi = await json('/api/me');
+    if (moi.user?.username === nom) return { user: moi.user, _statut: 200 };
+    const connexion = await poste('/api/auth/login', { email: personnes[nom], password: MOT_DE_PASSE });
+    if (connexion._statut !== 200) throw new Error('Connexion impossible pour ' + nom + ' (' + connexion._statut + ' ' + (connexion.error || '') + ') — trop de tentatives ? redémarre le serveur.');
+    return connexion;
+  };
+  // Créer un produit exige une session : on se connecte avant les catalogues.
+  await connecter('Camille');
   const produits = {};
   for (const [cle, corps] of [['soins', { name: 'Sérum éclat', brand: 'Maison Test', category: 'Soins', price: 24 }], ['parfum', { name: 'Nuit de figue', brand: 'Atelier Test', category: 'Parfums', price: 89 }]]) {
     const creation = await poste('/api/products', corps);
     if (creation.product) { produits[cle] = creation.product.id; continue; }
     produits[cle] = (await json('/api/products?q=' + encodeURIComponent(corps.name))).products?.[0]?.id;
   }
+  if (!produits.soins || !produits.parfum) throw new Error('Produits de démonstration introuvables : la création a échoué.');
   const octets = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   const envoyerPhoto = async () => {
     const formulaire = new FormData();
@@ -270,6 +294,117 @@ await page.goto(BASE + '/explorer', { waitUntil: 'networkidle2' });
 await pause(800);
 await page.screenshot({ path: sortie + '/8-explorer.png' });
 
+/* --- 9) Modération : signaler, masquer, rétablir ---
+   Le compte de modération est « Romy ». Il n'est modérateur que si le
+   serveur a été démarré avec LYNORA_MODERATORS="moderation@example.fr"
+   (c'est justement ce que l'on veut vérifier : le rôle ne vient jamais
+   de l'application). */
+const connecterDansLeNavigateur = (email, pseudo) => page.evaluate(async ([email, pseudo, mot]) => {
+  const moi = await fetch('/api/me').then(r => r.json());
+  if (moi.user?.username === pseudo) return { role: moi.user?.role, statut: 200 };
+  const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: mot }) });
+  const d = await r.json();
+  if (r.status !== 200) throw new Error('Connexion impossible pour ' + pseudo + ' (' + r.status + ') — trop de tentatives ? redémarre le serveur.');
+  return { role: d.user?.role, statut: r.status };
+}, [email, pseudo, 'mot-de-passe-demo-2026']);
+
+const moderation = await page.evaluate(async (mot) => {
+  const json = (chemin, options) => fetch(chemin, options).then(async r => ({ ...(await r.json()), _statut: r.status }));
+  const poste = (chemin, corps) => json(chemin, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
+  const sesIdentifiants = async (email, pseudo) => {
+    const moi = await json('/api/me');
+    if (moi.user?.username === pseudo) return { user: moi.user, _statut: 200 };
+    const connexion = await poste('/api/auth/login', { email, password: mot });
+    if (connexion._statut !== 200) throw new Error('Connexion impossible pour ' + pseudo + ' (' + connexion._statut + ') — trop de tentatives ? redémarre le serveur.');
+    return connexion;
+  };
+  // 1. Léa publie un conseil un peu vif, qu'Iris signale.
+  await sesIdentifiants('lea@example.fr', 'Léa');
+  let cible = (await json('/api/posts?author=' + (await json('/api/me')).user?.id)).posts?.find(p => p.caption.startsWith('Mon conseil qui a fâché'));
+  if (!cible) cible = (await poste('/api/posts', { type: 'conseil', category: 'Beauté', caption: 'Mon conseil qui a fâché : arrêtez d’acheter n’importe quoi les yeux fermés, lisez les avis avant de payer. Ce message a été signalé comme trop direct envers les marques.' })).post;
+  await sesIdentifiants('iris@example.fr', 'Iris');
+  const signalement = await poste('/api/posts/' + cible.id + '/report', { reason: 'Message trop direct envers les marques.' });
+  // 2. La console de modération, vue par une personne qui n'a pas le rôle.
+  const refus = await json('/api/moderation/reports?status=open');
+  // 3. Romy, le compte de la liste du serveur.
+  const romy = await sesIdentifiants('moderation@example.fr', 'Romy');
+  const file = await json('/api/moderation/reports?status=open');
+  return { cible: cible?.id, signalement: signalement.error || signalement.ok ? (signalement.error || 'enregistré') : 'inconnu', refus: refus._statut, role: romy.user?.role, ouverts: file.open_count, premier: file.reports?.[0]?.post_id, waiting: file.waiting };
+}, 'mot-de-passe-demo-2026');
+console.log('[app] modération — rôle de Romy :', moderation.role, '| accès d’une membre :', moderation.refus, '| signalements ouverts :', moderation.ouverts, '| liste de modérateurs configurée :', moderation.waiting);
+
+// Le contrôle décisif : une publication masquée est invisible pour le public.
+const vuePublique = async id => {
+  sondePublique = true;            // un 404 ici est le résultat attendu, pas une erreur
+  try {
+    return await page.evaluate(async (id) => {
+      const r = await fetch('/api/posts/' + id, { credentials: 'omit' });   // visiteuse ou visiteur non connecté
+      const d = await r.json().catch(() => ({}));
+      return { statut: r.status, hidden: d.post?.hidden };
+    }, id);
+  } finally { sondePublique = false; }
+};
+
+// 9a) Les signalements à traiter, avec le contenu et son auteur.
+await page.goto(BASE + '/moderation', { waitUntil: 'networkidle2' });
+await pause(1100);
+await page.screenshot({ path: sortie + '/9a-moderation-signalements.png' });
+const aTraiter = await page.$$eval('.modo-carte', els => els.map(e => e.textContent.replace(/\s+/g, ' ').trim().slice(0, 120)));
+console.log('[app] signalements affichés :', JSON.stringify(aTraiter));
+
+// 9b) Masquer le contenu depuis la console.
+const masque = await page.evaluate(() => {
+  const bouton = [...document.querySelectorAll('.modo-actions button')].find(b => b.textContent.includes('Masquer'));
+  if (!bouton) return false;
+  bouton.click();
+  return true;
+});
+await pause(1400);
+await page.screenshot({ path: sortie + '/9b-moderation-masque.png' });
+console.log('[app] masquage cliqué :', masque, '| invisible pour le public :', JSON.stringify(await vuePublique(moderation.cible)));
+
+// 9c) L'onglet « Masqués » : c'est là qu'on peut revenir en arrière.
+const ongletMasques = await page.evaluate(() => {
+  const bouton = [...document.querySelectorAll('.defis-onglets button')].find(b => b.textContent.trim() === 'Masqués');
+  if (!bouton) return false;
+  bouton.click();
+  return true;
+});
+await pause(1200);
+await page.screenshot({ path: sortie + '/9c-moderation-masques.png' });
+console.log('[app] onglet Masqués :', ongletMasques, '| cartes masquées :', await page.$$eval('.modo-carte', els => els.length));
+
+// 9d) Ce que voit la personne dont le contenu a été masqué : un bandeau explicatif.
+await connecterDansLeNavigateur('lea@example.fr', 'Léa');
+await page.goto(BASE + '/publication/' + moderation.cible, { waitUntil: 'networkidle2' });
+await pause(1000);
+await page.screenshot({ path: sortie + '/9d-auteur-prevenue.png' });
+console.log('[app] bandeau « masquée » chez l’auteur :', await page.$$eval('.modo-bandeau', els => els.length ? els[0].textContent.replace(/\s+/g, ' ').trim().slice(0, 80) : 'ABSENT (anormal)'));
+
+// 9f) Chez une membre, aucun accès à la console dans les paramètres.
+await page.goto(BASE + '/parametres', { waitUntil: 'networkidle2' });
+await pause(900);
+await page.screenshot({ path: sortie + '/9f-acces-absent.png' });
+console.log('[app] entrée « Modération » chez une membre :', (await page.$$eval('.moderation-acces', els => els.length)) ? 'PRÉSENTE (anormal)' : 'absente, comme prévu');
+
+// 9e) Rétablir depuis la console : le contenu redevient visible pour tout le monde.
+await connecterDansLeNavigateur('moderation@example.fr', 'Romy');
+await page.goto(BASE + '/moderation', { waitUntil: 'networkidle2' });
+await pause(900);
+await page.evaluate(() => { const b = [...document.querySelectorAll('.defis-onglets button')].find(x => x.textContent.trim() === 'Masqués'); if (b) b.click(); });
+await pause(1100);
+const retabli = await page.evaluate(() => { const b = [...document.querySelectorAll('.modo-actions button')].find(x => x.textContent.includes('Rétablir')); if (!b) return false; b.click(); return true; });
+await pause(1300);
+await page.screenshot({ path: sortie + '/9e-moderation-retabli.png' });
+console.log('[app] rétabli :', retabli, '| de nouveau visible pour le public :', JSON.stringify(await vuePublique(moderation.cible)));
+
+// 9g) Chez le compte de modération, le point d'entrée apparaît.
+await page.goto(BASE + '/parametres', { waitUntil: 'networkidle2' });
+await pause(900);
+await page.screenshot({ path: sortie + '/9g-acces-moderation.png' });
+console.log('[app] entrée « Modération » chez le compte de modération :', (await page.$$eval('.moderation-acces', els => els.length)) ? 'présente' : 'ABSENTE (anormal)');
+
 console.log('[app] erreurs :', erreurs.length ? erreurs.slice(0, 8) : 'aucune ✅');
 await browser.close();
+rmSync(profil, { recursive: true, force: true });
 console.log('[app] captures dans', sortie);

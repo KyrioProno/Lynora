@@ -73,3 +73,19 @@ CREATE TABLE IF NOT EXISTS challenge_entries (challenge_id INTEGER NOT NULL REFE
 CREATE TABLE IF NOT EXISTS challenge_votes (challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE, voter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(challenge_id, voter_id));
 CREATE INDEX IF NOT EXISTS challenge_entries_post ON challenge_entries(post_id);
 CREATE INDEX IF NOT EXISTS challenge_votes_post ON challenge_votes(post_id);`);
+
+/* Modération (sécurité de la communauté).
+   Colonnes ajoutées de façon additive : les bases existantes gardent leurs
+   données et reçoivent simplement les nouvelles colonnes.
+   - users.role            : 'member' (par défaut) ou 'moderator'. Aucun moyen
+     de devenir modérateur depuis l'application : la liste vient du serveur.
+   - posts.hidden          : 1 = contenu masqué par la modération.
+   - reports.status/...    : suivi du traitement d'un signalement. */
+if (!all('PRAGMA table_info(users)').some(c => c.name === 'role')) db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+if (!all('PRAGMA table_info(posts)').some(c => c.name === 'hidden')) db.exec('ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+const colonnesRapports = all('PRAGMA table_info(reports)').map(c => c.name);
+if (!colonnesRapports.includes('status')) db.exec("ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+if (!colonnesRapports.includes('action')) db.exec('ALTER TABLE reports ADD COLUMN action TEXT');
+if (!colonnesRapports.includes('resolved_by')) db.exec('ALTER TABLE reports ADD COLUMN resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!colonnesRapports.includes('resolved_at')) db.exec('ALTER TABLE reports ADD COLUMN resolved_at TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS reports_status ON reports(status, id DESC); CREATE INDEX IF NOT EXISTS posts_hidden ON posts(hidden, id DESC);');

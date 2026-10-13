@@ -190,3 +190,37 @@
 .defi-bandeau p{font-size:12.5px;line-height:1.55;color:#ded3dd;margin:0 0 8px}
 .defi-bandeau small{display:block;color:var(--muted);font-size:11.5px;margin-top:4px}
 .defi-bandeau small.depasse{color:#ffd0d8}
+
+/* ============================================================
+   MODÉRATION — console de la sécurité communautaire
+   ============================================================ */
+.moderation-acces{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;text-align:left;background:#221c26;border:1px solid #45364a;border-radius:14px;padding:12px 14px;color:#f6ecf3;margin-bottom:16px}
+.moderation-acces>svg:first-child{color:var(--pink);flex:none}
+.moderation-acces>svg:last-child{color:var(--muted);flex:none}
+.moderation-acces span{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.moderation-acces strong{font-size:13px}
+.moderation-acces small{color:var(--muted);font-size:10.5px;line-height:1.4}
+.modo-bandeau{display:flex;align-items:flex-start;gap:10px;background:#2b1d22;border-bottom:1px solid #5c3a3f;color:#f7e6ea;padding:13px 18px;font-size:11.5px;line-height:1.55}
+.modo-bandeau svg{color:#f0a8b6;flex:none;margin-top:1px}
+.modo-bandeau span{flex:1;display:block}
+.modo-bandeau strong{display:block;margin-bottom:3px;font-size:12px}
+.modo-bandeau button{border:1px solid #7d5057;background:#ffffff10;color:#f9eaee;border-radius:100px;padding:8px 13px;font-size:11px;font-weight:650;flex:none;min-height:36px}
+.modo-liste{display:flex;flex-direction:column;gap:11px;margin-top:4px}
+.modo-carte{background:#211d27;border:1px solid #3d3440;border-radius:16px;overflow:hidden}
+.modo-carte.masque{border-color:#5c3a3f;background:#241a1f}
+.modo-media{display:block;width:100%;border:0;padding:0;background:none}
+.modo-media>img,.modo-media>.media-placeholder{width:100%;height:132px;object-fit:cover}
+.modo-corps{padding:13px 14px 15px}
+.modo-entete{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.modo-entete .defi-entry-auteur{margin:0;flex:1;min-width:0}
+.modo-etat{font-size:10px;font-weight:700;border-radius:100px;padding:4px 9px;background:#e5a1ce22;color:#f0bcdc;border:1px solid #6d4a63;white-space:nowrap}
+.modo-etat.attente{background:#f0c98d1f;color:#f3d19f;border-color:#7a5f3c}
+.modo-citation{font-size:12.5px;line-height:1.6;color:#f3ecf1;margin:0 0 9px}
+.modo-motif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;line-height:1.5;color:#e7bccd;margin:0}
+.modo-motif svg{color:#e79ab4;flex:none}
+.modo-motif small{color:var(--muted);font-size:10px;margin-left:auto}
+.modo-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:13px}
+.modo-actions .button{flex:1;min-width:140px}
+.modo-journal{margin:10px 0 0;font-size:10.5px;color:var(--muted)}
+/* Une carte sans photo reste compacte : pas de grand cadre vide. */
+.modo-carte:not(:has(.modo-media)) .modo-corps{padding-top:15px}
