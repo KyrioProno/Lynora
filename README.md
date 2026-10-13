@@ -1,5 +1,15 @@
 # Lynora
 
+## Application hors ligne « L'Œil Mode » (avancement par étapes)
+
+`oeil-mode.html` est une application **séparée** de Lynora, construite dans **un seul fichier** : aucune bibliothèque, aucune police ni image externe, **aucune requête réseau**. Il suffit d'ouvrir le fichier (double-clic ou aperçu) pour l'utiliser, sans serveur ni Internet. Elle est conçue d'abord pour l'iPhone, en français.
+
+- **Étape 1 (livrée)** : écran d'accueil — identité « L'Œil Mode », illustration dessinée en SVG, gros bouton « Donner mon avis », six catégories tactiles, choix mémorisé, message volant explicatif.
+- **Données** : tout reste dans le navigateur sous le préfixe `oeilmode.` (`localStorage`). Aucun nom, aucun e-mail, aucun poste ou numéro transmis — conforme aux exigences RGPD de l'appli.
+- **Confort au doigt** : zone tactile minimale vérifiée automatiquement, très au-dessus de la règle des 44 px (bouton principal 56 px, tuiles 104 px).
+- **Vérification** : les captures de `captures/` proviennent d'un vrai Chromium piloté sans écran, qui contrôle aussi les tailles de boutons et l'absence de requête externe. Outils de test non versionnés : `npm install @sparticuz/chromium puppeteer-core` puis `node .cache/tools/shot.mjs file://<chemin>/oeil-mode.html captures` et, pour un aperçu local, `node .cache/tools/preview.mjs`.
+- **Prochaines étapes** (une seule à la fois, après validation) : écrire un avis, photo, notes par critères, liste de ses avis.
+
 Lynora est une application sociale mobile-first (PWA) autour des avis sincères, des produits, des looks et des inspirations beauté/style. Le catalogue et le fil démarrent volontairement vides : aucun profil, avis ou compteur fictif n'est injecté. Les deux images éditoriales servent uniquement d'illustrations d'ambiance.
 
 ## Démarrer
@@ -15,6 +25,31 @@ npm run dev          # Interface sur 0.0.0.0:5173, proxy /api et /uploads
 Ouvrir `http://localhost:5173`. Pour servir une version compilée sur un seul port : `npm run build && npm start` (port `3001`, configurable avec `PORT`). Le serveur gère aussi les URL partageables (`/produit/:id`, `/publication/:id`, `/profil/:id`) avec métadonnées Open Graph dans la version compilée.
 
 En local, la base est créée dans `data/lynora.sqlite` et les photos optimisées dans `public/uploads/`. Ces deux emplacements sont ignorés par Git. Sur Railway, l'application détecte automatiquement le volume attaché via `RAILWAY_VOLUME_MOUNT_PATH` et y place la base et les photos. Sans volume, elle refuse de démarrer pour éviter la perte de données. `DB_PATH` et `UPLOAD_DIR` restent disponibles pour d'autres déploiements. Ne pas lancer plusieurs instances sur un seul fichier SQLite.
+
+## État du projet au regard du cahier des charges (vérifié le 13/10/2026)
+
+Tests exécutés : `npm test` (parcours API complet : inscription, avis, photos privées, permissions, statistiques, brouillons, signalements, notifications ; plus les critères par catégorie) — **3/3 réussis**. Vérification dans un vrai navigateur : **aucune erreur** sur les écrans bienvenue, fil, fiche produit, explorer, créer et profil (captures dans `captures/lynora-existante/`).
+
+**Déjà fonctionnel** : écran de bienvenue (logo, « Ton style, ta communauté », Commencer, Se connecter, exploration sans compte) · inscription/connexion/déconnexion avec bcrypt, cookie HttpOnly + SameSite, sessions persistantes, limitation de débit (4 règles) · fil paginé par curseur, recherche produits/marques/personnes/publications, filtres (catégorie, marque, prix, note, tri) · création de produits avec détection de doublons (409) · photos WebP via sharp, accès privé aux médias non publiés · avis avec note globale, critères par catégorie, prix payé, photos · fil, likes, commentaires et réponses, « avis utile », abonnements, favoris, notifications, signalements, brouillons, édition et suppression · fiche produit avec note moyenne réelle, nombre d'avis, **indicateur « Est-ce que ça vaut son prix ? »** (fonction 1) · profils, bio, intérêts, visibilité des favoris · partage natif avec métadonnées Open Graph et liens profonds (`/produit/:id`, `/publication/:id`, `/profil/:id`) · PWA installable, en-têtes helmet, thème sombre prune/rose fidèle aux références.
+
+**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : collection de looks (fonction 2) · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
+
+### Critères par catégorie (étape livrée le 13/10/2026)
+
+`shared/criteres.js` est désormais **la table unique** utilisée à la fois par l'interface et par le serveur : impossible que les deux divergent.
+
+| Catégorie | Critères notés (1 à 5) | Champs texte facultatifs |
+| --- | --- | --- |
+| Maquillage | qualité, tenue dans le temps, facilité d'application, résultat obtenu, rapport qualité-prix | — |
+| Soins · Beauté · Hygiène | texture et facilité d'utilisation, résultats ressentis, tolérance personnelle, rapport qualité-prix | type de peau |
+| Cheveux | mêmes critères que les soins | type de cheveux |
+| Mode · Chaussures & sacs | coupe et confort, qualité des matériaux, fidélité des couleurs et du rendu, rapport qualité-prix | taille habituelle et taille commandée |
+| Parfums | odeur perçue, tenue estimée, intensité, rapport qualité-prix | occasion d'utilisation |
+
+- Le serveur applique une **liste blanche** : un critère qui n'appartient pas à la catégorie du produit est écarté, et un critère inventé n'est jamais enregistré.
+- Les **clés internes** (`quality`, `value`, `skin`…) ne changent jamais : les avis déjà enregistrés conservent leurs critères, seuls les libellés affichés ont évolué.
+- La fiche produit **agrège les déclarations** de la communauté : par exemple « Type de peau : sèche ×1 · mixte ×1 », « Occasion : tous les jours ×2 ».
+- Trois tests couvrent la table, le nettoyage des valeurs et la liste blanche côté serveur.
 
 ## Parcours disponibles
 

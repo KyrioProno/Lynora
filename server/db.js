@@ -36,3 +36,14 @@ const canonical = value => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '
 export const productKey = (brand,name) => canonical(brand) + '|' + canonical(name);
 for (const p of all('SELECT id,name,brand FROM products WHERE product_key IS NULL')) run('UPDATE products SET product_key=? WHERE id=?',productKey(p.brand,p.name),p.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS products_key_unique ON products(product_key)');
+
+/* Listes / collections partageables (Fonction 4 du cahier des charges).
+   - collections : une liste appartient à une personne, avec un titre, une
+     description courte et une visibilité publique ou privée.
+   - collection_items : les produits rangés dans la liste, dans l'ordre.
+     ON DELETE CASCADE : si un compte ou un produit disparaît, les lignes
+     associées partent avec lui (aucune donnée orpheline). */
+db.exec(`CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', visibility TEXT NOT NULL DEFAULT 'public', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS collection_items (collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, added_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(collection_id, product_id));
+CREATE INDEX IF NOT EXISTS collections_owner ON collections(owner_id, id DESC);
+CREATE INDEX IF NOT EXISTS collection_items_liste ON collection_items(collection_id, position, added_at);`);

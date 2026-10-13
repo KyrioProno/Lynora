@@ -14,12 +14,9 @@ export async function uploadImages(files) {
 }
 export const CATEGORIES = ['Maquillage','Mode','Beauté','Soins','Cheveux','Parfums','Lifestyle','Chaussures & sacs','Hygiène'];
 export const FORMATS = [{id:'avis',label:'Avis produit'},{id:'look',label:'Look complet'},{id:'routine',label:'Routine'},{id:'découverte',label:'Coup de cœur'},{id:'comparaison',label:'Comparaison'},{id:'conseil',label:'Conseil'},{id:'tenue',label:'Tenue du jour'}];
-export const criteriaFor = cat => {
-  if(cat==='Maquillage')return [['quality','Qualité'],['wear','Tenue'],['application','Application'],['result','Résultat'],['value','Rapport qualité-prix']];
-  if(['Soins','Beauté','Cheveux','Hygiène'].includes(cat))return [['texture','Texture / usage'],['result','Résultats'],['tolerance','Tolérance'],['value','Rapport qualité-prix']];
-  if(['Mode','Chaussures & sacs'].includes(cat))return [['fit','Coupe / confort'],['quality','Matières'],['accuracy','Rendu réel'],['value','Rapport qualité-prix']];
-  if(cat==='Parfums')return [['scent','Odeur'],['wear','Tenue'],['intensity','Intensité'],['value','Rapport qualité-prix']];
-  return [['quality','Qualité'],['value','Rapport qualité-prix']];
-};
+/* Les critères vivent désormais dans shared/criteres.js, utilisé aussi par le
+   serveur : impossible d'avoir une liste différente d'un côté et de l'autre.
+   `criteriaFor` reste exporté : c'est le nom utilisé par les écrans existants. */
+export { criteresNotes as criteriaFor, criteresTextes, groupesTextes, declarations } from '../shared/criteres.js';
 export const formatPrice = value => value == null ? null : new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'}).format(value);
 export const formatDate = value => new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'short',year:'numeric'}).format(new Date((value||'').replace(' ','T')+'Z'));

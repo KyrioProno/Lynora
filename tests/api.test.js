@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { criteresNotes, criteresTextes, groupesTextes, clesCriteres, declarations } from '../shared/criteres.js';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,3 +20,177 @@ const feed=await request('/posts');assert.equal(feed.data.posts[0].likes_count,1
 const draft=await request('/posts',{method:'POST',cookie:a.cookie,body:{type:'look',category:'Mode',caption:'',media:[],draft:true}});assert.equal(draft.status,201);assert.equal((await request('/posts?drafts=1',{cookie:a.cookie})).data.posts.length,1);assert.equal((await request('/posts')).data.posts.length,1);assert.equal((await request('/posts/'+draft.data.post.id)).status,404);
 const login=await request('/auth/login',{method:'POST',body:{email:'a@example.fr',password:'un-mot-de-passe-solide'}});assert.equal(login.status,200);assert.equal(login.data.user.username,'Alice');await request('/auth/logout',{method:'POST',cookie:login.cookie});assert.equal((await request('/me',{cookie:login.cookie})).data.user,null);
 }finally{server.kill();rmSync(dir,{recursive:true,force:true})}});
+
+/* ============================================================
+   ÉTAPE « CRITÈRES PAR CATÉGORIE »
+   1) la table partagée shared/criteres.js contient bien ce que
+      demande le cahier des charges ;
+   2) le serveur n'accepte que les critères prévus pour la
+      catégorie du produit (liste blanche), et les déclarations
+      texte (type de peau, pointure, occasion) sont conservées.
+   ============================================================ */
+test('critères adaptés à chaque catégorie', () => {
+  // Maquillage : les 5 critères du cahier des charges, dans l'ordre
+  assert.deepEqual(criteresNotes('Maquillage').map(([cle]) => cle), ['quality', 'wear', 'application', 'result', 'value']);
+  // Soins / Cheveux / Hygiène : texture, résultats, tolérance, prix
+  for (const cat of ['Soins', 'Beauté', 'Cheveux', 'Hygiène'])
+    assert.deepEqual(criteresNotes(cat).map(([cle]) => cle), ['texture', 'result', 'tolerance', 'value'], cat);
+  // Vêtements et chaussures : coupe, matières, fidélité du rendu, prix
+  for (const cat of ['Mode', 'Chaussures & sacs'])
+    assert.deepEqual(criteresNotes(cat).map(([cle]) => cle), ['fit', 'quality', 'accuracy', 'value'], cat);
+  // Parfums : odeur, tenue, intensité, prix
+  assert.deepEqual(criteresNotes('Parfums').map(([cle]) => cle), ['scent', 'wear', 'intensity', 'value']);
+  // Le rapport qualité-prix est présent partout : c'est la base de « Est-ce que ça vaut son prix ? »
+  for (const cat of ['Maquillage', 'Soins', 'Mode', 'Chaussures & sacs', 'Parfums', 'Lifestyle'])
+    assert.ok(criteresNotes(cat).some(([cle]) => cle === 'value'), cat);
+
+  // Champs texte : type de peau pour les soins, pointures pour les vêtements, occasion pour les parfums
+  assert.deepEqual(criteresTextes('Soins').map(c => c.key), ['skin']);
+  assert.deepEqual(criteresTextes('Cheveux').map(c => c.key), ['hair']);
+  assert.deepEqual(criteresTextes('Mode').map(c => c.key), ['sizeUsual', 'sizeOrdered']);
+  assert.deepEqual(criteresTextes('Parfums').map(c => c.key), ['occasion']);
+  assert.deepEqual(criteresTextes('Lifestyle'), []);
+  // Les deux pointures s'affichent côte à côte, le type de peau tout seul
+  assert.deepEqual(groupesTextes('Mode').map(g => g.map(c => c.key)), [['sizeUsual', 'sizeOrdered']]);
+  assert.deepEqual(groupesTextes('Soins').map(g => g.length), [1]);
+  // Aucun champ texte oublié dans la liste blanche
+  assert.deepEqual(clesCriteres('Parfums').sort(), ['intensity', 'occasion', 'scent', 'value', 'wear']);
+
+  // Agrégation des déclarations : « mixte » et « Mixte » comptent ensemble
+  const avis = [
+    { criteria: { skin: 'mixte', value: 4 } },
+    { criteria: { skin: 'Mixte' } },
+    { criteria: { skin: 'sèche' } },
+    { criteria: { value: 5 } }
+  ];
+  assert.deepEqual(declarations(avis, 'Soins'), [{ key: 'skin', label: 'Type de peau', valeurs: [{ valeur: 'mixte', n: 2 }, { valeur: 'sèche', n: 1 }] }]);
+  assert.deepEqual(declarations(avis, 'Lifestyle'), []);
+});
+
+test('le serveur n’accepte que les critères prévus pour la catégorie', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-criteres-'));
+  const port = 41000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const compte = await requete('/auth/register', { method: 'POST', body: { email: 'parfum@example.fr', username: 'Iris', password: 'un-mot-de-passe-solide' } });
+    assert.equal(compte.status, 201);
+    const produit = await requete('/products', { method: 'POST', cookie: compte.cookie, body: { name: 'Eau de test', brand: 'Maison Test', category: 'Parfums', price: 89 } });
+    assert.equal(produit.status, 201);
+    const pid = produit.data.product.id;
+
+    // Critères envoyés : 3 valides pour un parfum, 1 clé d'une autre catégorie, 1 clé inventée
+    const avis = await requete('/posts', {
+      method: 'POST', cookie: compte.cookie,
+      body: {
+        type: 'avis', category: 'Parfums', caption: 'Une odeur boisée qui tient toute la journée, parfaite pour le travail.', productId: pid, rating: 5,
+        criteria: { scent: 5, wear: 4, intensity: 3, value: 4, occasion: '  tous les jours  ', texture: 5, critereInvente: 5 }
+      }
+    });
+    assert.equal(avis.status, 201, JSON.stringify(avis.data));
+    // Seuls scent, wear, intensity, value et occasion sont conservés ; le texte est nettoyé
+    assert.deepEqual(avis.data.post.criteria, { scent: 5, wear: 4, intensity: 3, value: 4, occasion: 'tous les jours' });
+
+    // La fiche produit agrège les notes réelles
+    const fiche = await requete('/products/' + pid);
+    assert.equal(fiche.data.product.avg_rating, 5);
+    assert.equal(fiche.data.product.value_rating, 4);
+    assert.deepEqual(fiche.data.reviews[0].criteria, { scent: 5, wear: 4, intensity: 3, value: 4, occasion: 'tous les jours' });
+    // Et les déclarations se retrouvent telles quelles pour la fiche
+    assert.deepEqual(declarations(fiche.data.reviews, 'Parfums'), [{ key: 'occasion', label: 'Occasion', valeurs: [{ valeur: 'tous les jours', n: 1 }] }]);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   LISTES PARTAGEABLES (Fonction 4)
+   Ce test vérifie ce qui pourrait faire mal : une liste privée
+   doit rester privée, et personne d'autre que son propriétaire
+   ne peut la modifier.
+   ============================================================ */
+test('listes partageables : visibilité, permissions et rangement', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-listes-'));
+  const port = 42000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'liste-a@example.fr', username: 'Alice', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'liste-b@example.fr', username: 'Brune', password: 'un-autre-mot-de-passe' } });
+    const produit = await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Crème test', brand: 'Maison Test', category: 'Soins', price: 18 } });
+    const pid = produit.data.product.id;
+    const autresProduits = [];
+    for (const nom of ['Baume test', 'Huile test']) autresProduits.push((await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: nom, brand: 'Maison Test', category: 'Soins' } })).data.product.id);
+
+    // 1. Création d'une liste privée par Brune
+    const creation = await requete('/collections', { method: 'POST', cookie: b.cookie, body: { title: 'Ma routine du soir', description: 'Mes essentiels avant de dormir.', visibility: 'private' } });
+    assert.equal(creation.status, 201);
+    const liste = creation.data.collection.id;
+    assert.equal(creation.data.collection.items_count, 0);
+    assert.deepEqual(creation.data.collection.covers, []);
+    // Titre trop court : refusé
+    assert.equal((await requete('/collections', { method: 'POST', cookie: b.cookie, body: { title: 'x' } })).status, 400);
+    // Sans compte : refusé
+    assert.equal((await requete('/collections', { method: 'POST', body: { title: 'Sans compte' } })).status, 401);
+
+    // 2. La liste privée reste privée : ni l'invité, ni Alice ne la voient
+    assert.equal((await requete('/collections/' + liste)).status, 403);
+    assert.equal((await requete('/collections/' + liste, { cookie: a.cookie })).status, 403);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections.length, 0);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: b.cookie })).data.collections.length, 1);
+
+    // 3. Rangement du produit, et refus du doublon
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: pid } })).status, 201);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: pid } })).status, 409);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: b.cookie, body: { productId: 9999 } })).status, 404);
+
+    // 4. Alice ne peut rien modifier chez Brune
+    assert.equal((await requete('/collections/' + liste, { method: 'PATCH', cookie: a.cookie, body: { title: 'Détournement' } })).status, 403);
+    assert.equal((await requete('/collections/' + liste + '/items', { method: 'POST', cookie: a.cookie, body: { productId: autresProduits[0] } })).status, 403);
+    assert.equal((await requete('/collections/' + liste, { method: 'DELETE', cookie: a.cookie })).status, 403);
+
+    // 5. Brune publie la liste : tout le monde peut la lire, avec la note réelle des produits
+    await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'avis', category: 'Soins', caption: 'Une crème très agréable, la peau est souple au réveil.', productId: pid, rating: 5, criteria: { texture: 5, value: 4 } } });
+    await requete('/collections/' + liste, { method: 'PATCH', cookie: b.cookie, body: { title: 'Ma routine du soir', description: 'Mes essentiels avant de dormir.', visibility: 'public' } });
+    const vueInvite = await requete('/collections/' + liste);
+    assert.equal(vueInvite.status, 200);
+    assert.equal(vueInvite.data.collection.items_count, 1);
+    assert.equal(vueInvite.data.collection.owner_id, b.data.user.id);
+    assert.equal(vueInvite.data.collection.mine, false);
+    assert.equal(vueInvite.data.products[0].id, pid);
+    assert.equal(vueInvite.data.products[0].avg_rating, 5);
+    assert.equal(vueInvite.data.products[0].review_count, 1);
+    const vueProprietaire = await requete('/collections/' + liste, { cookie: b.cookie });
+    assert.equal(vueProprietaire.data.collection.mine, true);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections[0].items_count, 1);
+    // La vignette de couverture vient de la première photo réelle du produit (ici aucune) : la liste reste valide
+    assert.deepEqual((await requete('/users/' + b.data.user.id + '/collections', { cookie: a.cookie })).data.collections[0].covers, []);
+
+    // 6. L'écran d'ajout sait si le produit est déjà rangé
+    const mesListes = await requete('/me/collections?productId=' + pid, { cookie: b.cookie });
+    assert.equal(mesListes.data.collections[0].has_product, true);
+    assert.equal((await requete('/me/collections?productId=' + autresProduits[0], { cookie: b.cookie })).data.collections[0].has_product, false);
+
+    // 7. Retrait du produit, puis suppression de la liste
+    const retrait = await requete('/collections/' + liste + '/items/' + pid, { method: 'DELETE', cookie: b.cookie });
+    assert.equal(retrait.data.items_count, 0);
+    assert.equal((await requete('/collections/' + liste)).data.products.length, 0);
+    assert.equal((await requete('/collections/' + liste, { method: 'DELETE', cookie: b.cookie })).status, 200);
+    assert.equal((await requete('/collections/' + liste)).status, 404);
+    assert.equal((await requete('/users/' + b.data.user.id + '/collections', { cookie: b.cookie })).data.collections.length, 0);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
