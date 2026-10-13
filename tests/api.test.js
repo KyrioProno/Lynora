@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { criteresNotes, criteresTextes, groupesTextes, clesCriteres, declarations } from '../shared/criteres.js';
 import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -270,5 +271,116 @@ test('les pièces d’un look : composition, ordre et limites', async () => {
     assert.equal((await requete('/posts/' + look.data.post.id, { method: 'PATCH', cookie: b.cookie, body: { type: 'look', category: 'Mode', caption: 'Je modifie le look de quelqu’un d’autre.', productIds: [baskets] } })).status, 403);
     // Et un look d'autrui reste visible : c'est le principe du partage
     assert.equal((await requete('/posts/' + look.data.post.id, { cookie: b.cookie })).status, 200);
+  } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
+});
+
+/* ============================================================
+   DÉFIS COMMUNAUTAIRES (Fonction 3)
+   Ce test vérifie les règles qui protègent l'honnêteté du jeu :
+   une participation par personne, un vote par personne, pas de
+   vote pour soi-même, rien après la date de fin, et des compteurs
+   qui correspondent aux vraies participations.
+   ============================================================ */
+test('défis communautaires : participations, votes et fins de défi', async () => {
+  const dossier = mkdtempSync(join(tmpdir(), 'lynora-defis-'));
+  const port = 44000 + Math.floor(Math.random() * 1000);
+  const base = `http://127.0.0.1:${port}/api`;
+  const serveur = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DB_PATH: '', UPLOAD_DIR: '', RAILWAY_ENVIRONMENT: 'test', RAILWAY_VOLUME_MOUNT_PATH: dossier, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let journal = '';
+  serveur.stderr.on('data', d => journal += d);
+  serveur.stdout.on('data', d => journal += d);
+  const requete = async (chemin, { method = 'GET', body, cookie } = {}) => {
+    const r = await fetch(base + chemin, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json(), cookie: r.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + '/me')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+    const a = await requete('/auth/register', { method: 'POST', body: { email: 'defi-a@example.fr', username: 'Maya', password: 'un-mot-de-passe-solide' } });
+    const b = await requete('/auth/register', { method: 'POST', body: { email: 'defi-b@example.fr', username: 'Sami', password: 'un-autre-mot-de-passe' } });
+    const c = await requete('/auth/register', { method: 'POST', body: { email: 'defi-c@example.fr', username: 'Lou', password: 'un-troisieme-mot-de-passe' } });
+    const produit = (await requete('/products', { method: 'POST', cookie: a.cookie, body: { name: 'Rouge mat', brand: 'Atelier Test', category: 'Maquillage', price: 22 } })).data.product.id;
+
+    // 1. Proposer un défi : titre et règle du jeu obligatoires
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'abc', brief: 'Trop court' } })).status, 400);
+    assert.equal((await requete('/challenges', { method: 'POST', body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum.' } })).status, 401);
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum.', category: 'Mode', budget: -5 } })).status, 400);
+    assert.equal((await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look avec 50 € maximum.', category: 'Mode', endsAt: '2020-01-01' } })).status, 400);
+    const creation = await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Un look à 50 €', brief: 'Compose un look complet avec 50 € maximum, tout est permis sauf dépasser.', category: 'Mode', budget: 50, votesAllowed: true, endsAt: '2099-12-31' } });
+    assert.equal(creation.status, 201, JSON.stringify(creation.data));
+    const defi = creation.data.challenge.id;
+    assert.equal(creation.data.challenge.entries_count, 0);
+    assert.equal(creation.data.challenge.votes_count, 0);
+    assert.equal(creation.data.challenge.votes_allowed, 1);
+
+    // 2. Chacun prépare une création, puis participe
+    const lookMaya = (await requete('/posts', { method: 'POST', cookie: a.cookie, body: { type: 'look', category: 'Mode', caption: 'Mon look à moins de cinquante euros, tout en seconde main.', productIds: [produit] } })).data.post;
+    const lookSami = (await requete('/posts', { method: 'POST', cookie: b.cookie, body: { type: 'look', category: 'Mode', caption: 'Un look très simple avec trois pièces que j’avais déjà.', productIds: [produit] } })).data.post;
+    const lookLou = (await requete('/posts', { method: 'POST', cookie: c.cookie, body: { type: 'look', category: 'Mode', caption: 'Ma proposition colorée pour ce défi à petit budget.', productIds: [produit] } })).data.post;
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: a.cookie, body: { postId: lookMaya.id } })).status, 201);
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookSami.id } })).status, 201);
+    // Sami ne peut pas participer deux fois, ni présenter la publication d'une autre personne
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookLou.id } })).status, 403);
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: b.cookie, body: { postId: lookSami.id } })).status, 409);
+    // Un brouillon ne peut pas concourir
+    const brouillon = (await requete('/posts', { method: 'POST', cookie: c.cookie, body: { type: 'look', category: 'Mode', caption: '', productIds: [produit], draft: true } })).data.post;
+    assert.equal((await requete('/challenges/' + defi + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: brouillon.id } })).status, 404);
+
+    // 3. Votes : pas pour soi-même, un seul vote par personne, déplaçable
+    assert.equal((await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: a.cookie, body: { postId: lookMaya.id } })).status, 400);  // soi-même
+    assert.equal((await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 404);    // pas une participation
+    const voteLou = await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookMaya.id } });
+    assert.equal(voteLou.status, 200);
+    assert.equal(voteLou.data.votes_count, 1);
+    const voteLouAilleurs = await requete('/challenges/' + defi + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookSami.id } });
+    assert.equal(voteLouAilleurs.data.votes_count, 1);   // son vote s'est déplacé
+    assert.equal(voteLouAilleurs.data.my_vote, lookSami.id);
+
+    // 4. Le défi affiche des compteurs réels et un classement
+    const vue = await requete('/challenges/' + defi, { cookie: a.cookie });
+    assert.equal(vue.data.challenge.entries_count, 2);
+    assert.equal(vue.data.challenge.votes_count, 1);
+    assert.equal(vue.data.entries[0].id, lookSami.id);                       // celui qui a un vote est en tête
+    assert.equal(vue.data.entries[0].votes_count, 1);
+    assert.equal(vue.data.entries[1].votes_count, 0);
+    assert.equal(vue.data.entries.find(e => e.id === lookMaya.id).mine, true);
+    // Budget : le total estimé vient des prix réellement renseignés des pièces
+    assert.equal(vue.data.entries[0].estimated_total, 22);
+    assert.equal(vue.data.entries[0].pieces_without_price, 0);
+    // La publication affiche qu'elle participe au défi
+    assert.equal((await requete('/posts/' + lookMaya.id)).data.post.challenge_id, defi);
+    assert.equal((await requete('/posts/' + lookMaya.id)).data.post.challenge_title, 'Un look à 50 €');
+    // La personne qui a proposé le défi a reçu une notification de participation
+    assert.ok((await requete('/notifications', { cookie: a.cookie })).data.notifications.some(n => n.kind === 'challenge_entry'));
+
+    // 5. Défi sans vote : le vote est refusé proprement
+    const sansVote = (await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Ta routine du matin', brief: 'Montre ta routine, sans vote cette fois.', category: 'Soins', votesAllowed: false } })).data.challenge;
+    assert.equal(sansVote.votes_allowed, 0);
+    assert.equal((await requete('/challenges/' + sansVote.id + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 201);
+    assert.equal((await requete('/challenges/' + sansVote.id + '/votes', { method: 'POST', cookie: a.cookie, body: { postId: lookLou.id } })).status, 400);
+
+    // 6. Défi terminé (date passée) : plus de participation, plus de vote
+    const passe = (await requete('/challenges', { method: 'POST', cookie: a.cookie, body: { title: 'Défi du mois dernier', brief: 'Ce défi est déjà terminé depuis longtemps.', category: 'Mode', endsAt: '2099-12-30' } })).data.challenge;
+    // On rend le défi « déjà terminé » en écrivant une date passée directement
+    // dans le fichier SQLite du serveur de test (aucune route technique en production).
+    const baseDeTest = new DatabaseSync(join(dossier, 'lynora.sqlite'));
+    baseDeTest.prepare("UPDATE challenges SET ends_at='2020-01-01 00:00:00' WHERE id=?").run(passe.id);
+    baseDeTest.close();
+    assert.equal((await requete('/challenges/' + passe.id + '/entries', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 400);
+    assert.equal((await requete('/challenges/' + passe.id + '/votes', { method: 'POST', cookie: c.cookie, body: { postId: lookLou.id } })).status, 400);
+    assert.equal((await requete('/challenges?status=past')).data.challenges.some(x => x.id === passe.id), true);
+    assert.equal((await requete('/challenges?status=open')).data.challenges.some(x => x.id === passe.id), false);
+
+    // 7. Retirer sa participation emporte ses votes
+    const retrait = await requete('/challenges/' + defi + '/entries', { method: 'DELETE', cookie: b.cookie });
+    assert.equal(retrait.status, 200);
+    assert.equal((await requete('/challenges/' + defi)).data.challenge.entries_count, 1);
+    assert.equal((await requete('/challenges/' + defi)).data.challenge.votes_count, 0);
+
+    // 8. Suppression du défi par une autre personne : refusée
+    assert.equal((await requete('/challenges/' + defi, { method: 'DELETE', cookie: b.cookie })).status, 403);
+    assert.equal((await requete('/challenges/' + defi, { method: 'DELETE', cookie: a.cookie })).status, 200);
+    assert.equal((await requete('/challenges/' + defi)).status, 404);
+    // Les publications des participants existent toujours : le défi disparaît, pas les créations
+    assert.equal((await requete('/posts/' + lookMaya.id)).status, 200);
   } finally { serveur.kill(); rmSync(dossier, { recursive: true, force: true }); }
 });

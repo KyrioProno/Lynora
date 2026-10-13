@@ -58,3 +58,18 @@ CREATE INDEX IF NOT EXISTS collection_items_liste ON collection_items(collection
 db.exec(`CREATE TABLE IF NOT EXISTS post_products (post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(post_id, product_id));
 CREATE INDEX IF NOT EXISTS post_products_look ON post_products(post_id, position);
 CREATE INDEX IF NOT EXISTS post_products_piece ON post_products(product_id);`);
+
+/* Défis communautaires (Fonction 3 du cahier des charges).
+   - challenges : un défi proposé par une personne (titre, règle du jeu,
+     catégorie, budget indicatif éventuel, date de fin, votes autorisés).
+   - challenge_entries : les participations. La clé (défi, personne) garantit
+     UNE seule participation par défi ; elle pointe vers une publication.
+   - challenge_votes : les votes. La clé (défi, votant) garantit UN seul vote
+     par personne et par défi.
+   Suppressions en cascade : fermer un compte ou supprimer une publication
+   nettoyé automatiquement les participations et les votes associés. */
+db.exec(`CREATE TABLE IF NOT EXISTS challenges (id INTEGER PRIMARY KEY, author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, brief TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, budget REAL, votes_allowed INTEGER NOT NULL DEFAULT 1, ends_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS challenge_entries (challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(challenge_id, user_id));
+CREATE TABLE IF NOT EXISTS challenge_votes (challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE, voter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(challenge_id, voter_id));
+CREATE INDEX IF NOT EXISTS challenge_entries_post ON challenge_entries(post_id);
+CREATE INDEX IF NOT EXISTS challenge_votes_post ON challenge_votes(post_id);`);

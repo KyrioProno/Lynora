@@ -31,7 +31,7 @@ page.on('pageerror', e => erreurs.push('ERREUR JS : ' + e.message));
 // Les 409 sont normaux ici : le script est rejouable, donc le serveur refuse
 // (à raison) les comptes, produits et avis déjà créés lors d'une visite précédente.
 page.on('response', r => {
-  if (r.status() >= 400 && !(r.status() === 409 && /\/api\/(auth|products|posts|collections)/.test(r.url())))
+  if (r.status() >= 400 && !(r.status() === 409 && /\/api\/(auth|products|posts|collections|challenges)/.test(r.url())))
     erreurs.push('HTTP ' + r.status() + ' ' + r.url());
 });
 
@@ -76,6 +76,11 @@ const demo = await page.evaluate(async (b64) => {
     if (avecPhoto) corps.media = await envoyerPhoto();
     resultats.push(compte + ' : ' + ((await poste('/api/posts', corps)).error || 'créé'));
   }
+  // Un défi communautaire avec un budget, et une participation en règle.
+  await connecter('Camille');
+  let defi = (await json('/api/challenges?status=open')).challenges?.find(x => x.title === 'Un look complet à 50 €');
+  if (!defi) defi = (await poste('/api/challenges', { title: 'Un look complet à 50 €', brief: 'Compose un look complet avec 50 € maximum, en réutilisant ce que tu as déjà.', category: 'Mode', budget: 50, votesAllowed: true, endsAt: '2099-12-31' })).challenge;
+
   // Un look complet : un cabas, des baskets, un rouge à lèvres et un parfum.
   await connecter('Camille');
   const photos = await envoyerPhoto();
@@ -94,6 +99,14 @@ const demo = await page.evaluate(async (b64) => {
   let look = (await json('/api/posts?author=' + (await json('/api/me')).user?.id)).posts?.find(p => p.type === 'look');
   if (!look) look = (await poste('/api/posts', { type: 'look', category: 'Mode', caption: 'Ma tenue du jour : le cabas en cuir, les baskets blanches, mon rouge à lèvres mat et le sérum qui finit la routine.', productIds: pieces, media: photos })).post;
 
+  if (defi && look) {
+    const participation = await poste('/api/challenges/' + defi.id + '/entries', { postId: look.id });
+    await connecter('Iris');
+    const vote = await poste('/api/challenges/' + defi.id + '/votes', { postId: look.id });
+    defi.participation = participation.error || 'ok';
+    defi.vote = vote.error || 'ok';
+  }
+
   // Une liste partagée par Camille, avec les deux produits déjà créés.
   await connecter('Camille');
   let liste = (await json('/api/me/collections')).collections?.find(l => l.title === 'Ma routine du matin');
@@ -101,7 +114,8 @@ const demo = await page.evaluate(async (b64) => {
     liste = (await poste('/api/collections', { title: 'Ma routine du matin', description: 'Les produits que j’utilise chaque matin, du sérum au parfum.', visibility: 'public' })).collection;
     for (const produit of [produits.soins, produits.parfum]) await poste('/api/collections/' + liste.id + '/items', { productId: produit });
   }
-  return { produits, avis: resultats, liste: liste?.id, listeTitre: liste?.title, look: look?.id, lookPieces: look?.pieces?.length || pieces.filter(Boolean).length };
+  const detailDefi = defi ? await json('/api/challenges/' + defi.id) : null;
+  return { produits, avis: resultats, liste: liste?.id, listeTitre: liste?.title, look: look?.id, lookPieces: look?.pieces?.length || pieces.filter(Boolean).length, defi: defi?.id, defiTitre: defi?.title, defiParticipations: detailDefi?.challenge?.entries_count, defiVotes: detailDefi?.challenge?.votes_count, defiTotal: detailDefi?.entries?.[0]?.estimated_total };
 }, photo);
 console.log('[app] produits :', JSON.stringify(demo.produits), '| avis :', JSON.stringify(demo.avis), '| liste :', demo.liste);
 
@@ -188,6 +202,38 @@ const ajoutPiece = await page.evaluate(async () => {
 await pause(500);
 await page.screenshot({ path: sortie + '/5f-look-piece-ajoutee.png' });
 console.log('[app] composeur de look :', choixLook, '|', ajoutPiece, '| pièces affichées :', await page.$$eval('.piece-chip strong', els => els.map(e => e.textContent)));
+
+// --- 5g) Les défis : liste, détail avec classement, badge sur la publication ---
+await page.goto(BASE + '/defis', { waitUntil: 'networkidle2' });
+await pause(900);
+await page.screenshot({ path: sortie + '/5g-defis.png' });
+const cartesDefis = await page.$$eval('.defi-card', els => els.map(e => e.textContent.replace(/\s+/g, ' ').trim().slice(0, 80)));
+console.log('[app] défis listés :', JSON.stringify(cartesDefis));
+
+if (demo.defi) {
+  await page.goto(BASE + '/defi/' + demo.defi, { waitUntil: 'networkidle2' });
+  await pause(900);
+  await page.screenshot({ path: sortie + '/5h-defi-detail.png' });
+  const infos = await page.evaluate(() => ({
+    titre: document.querySelector('.defi-entete h1')?.textContent,
+    chiffres: [...document.querySelectorAll('.defi-chiffres span')].map(e => e.textContent.trim()),
+    budget: document.querySelector('.defi-budget')?.textContent.trim(),
+    soumis: [...document.querySelectorAll('.defi-entry-auteur strong')].map(e => e.textContent)
+  }));
+  console.log('[app] défi :', JSON.stringify(infos));
+  await page.evaluate(() => document.querySelector('.defi-entries')?.scrollIntoView({ block: 'start' }));
+  await pause(500);
+  await page.screenshot({ path: sortie + '/5i-defi-classement.png' });
+}
+
+if (demo.look) {
+  await page.goto(BASE + '/publication/' + demo.look, { waitUntil: 'networkidle2' });
+  await pause(800);
+  await page.evaluate(() => document.querySelector('.defi-badge')?.scrollIntoView({ block: 'center' }));
+  await pause(400);
+  await page.screenshot({ path: sortie + '/5j-publication-defi.png' });
+  console.log('[app] badge de défi sur la publication :', await page.$eval('.defi-badge', e => e.textContent.trim()).catch(() => 'ABSENT'));
+}
 
 // --- 6) Feuille « Ajouter à une liste » depuis une fiche produit ---
 if (demo.produits.parfum) {

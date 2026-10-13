@@ -55,7 +55,18 @@ Un look rassemble plusieurs produits **de catégories différentes** — un caba
 - **Partage** : l'aperçu d'un look annonce ses pièces (« Un look en 5 pièces : Cabas en cuir, Baskets blanches… »).
 - **Test** : ordre et doublons des pièces, avis sans pièces, comparaison à un seul produit refusée, brouillon incomplet accepté, fiche produit qui retrouve ses looks, modification par autrui refusée (403).
 
-**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : défis communautaires (fonction 3) · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
+### Défis communautaires (Fonction 3, livrée le 13/10/2026)
+
+Une personne propose un défi (« Un look complet à 50 € », « Ma routine du matin »…), les autres participent en présentant une création, et votent quand le défi l'autorise.
+
+- **Base de données** : `challenges` (titre, règle du jeu, catégorie, budget indicatif, votes autorisés ou non, date de fin), `challenge_entries` (clé défi + personne : **une seule participation par défi**) et `challenge_votes` (clé défi + votant : **un seul vote par défi**). Suppressions en cascade partout.
+- **Règles du jeu** : on ne vote jamais pour soi-même ; un vote peut être déplacé d'une création à une autre (une personne = une voix) ; après la date de fin, participations et votes sont clos ; on ne présente que ses propres publications publiées (un brouillon est refusé) ; participer deux fois est refusé (409).
+- **Défi à budget** : si un budget est renseigné, chaque participation affiche le total des prix réellement renseignés de ses pièces, l'écart par rapport au budget, et signale les pièces sans prix. Rien n'est inventé : si aucune pièce n'a de prix, aucun total n'est affiché.
+- **Écrans** : `/defis` (défis ouverts et terminés, proposition d'un défi avec cinq idées prêtes à l'emploi), `/defi/:id` (règle du jeu, chiffres réels, participation, classement par votes, bouton « Voter »), section « Les défis du moment » dans Explorer, badge « Participe au défi… » sur la publication concernée, et bandeau du défi — avec le total des pièces — dans l'écran de création (`/creer?defi=3`).
+- **Notifications** : la personne qui a proposé le défi est prévenue d'une participation, et celle dont la création est votée aussi.
+- **Test** : couvre le titre et la règle obligatoires, le budget et la date validés, une participation par personne, la présentation de la publication d'autrui refusée, le brouillon refusé, le vote pour soi refusé, le vote déplacé, les compteurs réels, le classement, le défi sans vote, le défi terminé, le retrait d'une participation qui emporte ses votes, la suppression réservée à l'auteur et les publications préservées après suppression du défi.
+
+**Reste à faire** (aucune de ces fonctions n'existe aujourd'hui) : console de modération des signalements · défis communautaires (fonction 3) · listes et collections partageables (fonction 4) · console de modération et traitement des signalements · suppression de compte et export des données · vérification d'adresse e-mail et récupération de mot de passe (nécessitent un service d'envoi : aucune clé API n'est configurée, donc à brancher explicitement, pas à simuler).
 
 ### Critères par catégorie (étape livrée le 13/10/2026)
 

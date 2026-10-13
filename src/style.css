@@ -115,3 +115,78 @@
 .look-card-author{display:flex;align-items:center;gap:7px;min-width:0}
 .look-card-author strong{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .look-card small{color:var(--muted);font-size:10.5px}
+/* ============================================================
+   Défis communautaires (Fonction 3)
+   ============================================================ */
+.defis-intro{padding:22px 0 6px}
+.defis-intro h1{font-family:Georgia,serif;font-weight:400;font-size:32px;line-height:1.1;margin:7px 0 10px;letter-spacing:-.045em}
+.defis-intro h1 em{color:#efb7da}
+.defis-intro p{font-size:13px;line-height:1.55}
+.defi-form{background:#1f1a24;border:1px solid #403340;border-radius:18px;padding:16px;margin:16px 0 20px}
+.defi-form .form-label{margin:13px 0}
+.defi-switch{display:flex;gap:12px;align-items:flex-start;margin:16px 0 4px;border-top:1px solid #3b3140;padding-top:15px}
+.defi-switch input{appearance:none;flex:none;width:38px;height:23px;border-radius:100px;background:#554858;position:relative;cursor:pointer;margin-top:2px}
+.defi-switch input:after{content:"";position:absolute;width:17px;height:17px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
+.defi-switch input:checked{background:#de9ec9}
+.defi-switch input:checked:after{left:18px}
+.defi-switch span{display:flex;flex-direction:column;gap:4px}
+.defi-switch strong{font-size:12.5px}
+.defi-switch small{color:var(--muted);font-size:11px;line-height:1.45}
+.defis-onglets{display:flex;gap:8px;margin:22px 0 14px}
+.defis-onglets button{flex:1;min-height:44px;border-radius:100px;border:1px solid #4d4050;background:#241d28;color:#ddd1de;font-size:12.5px;font-weight:650}
+.defis-onglets button.selected{border-color:#ecb3d8;background:#edb6da;color:#271726}
+.defis-liste{display:flex;flex-direction:column;gap:12px}
+.defi-card{display:flex;flex-direction:column;gap:9px;text-align:left;width:100%;background:linear-gradient(180deg,#241d2b,#1e1922);border:1px solid #43364a;border-radius:20px;padding:15px;color:#f5eef3}
+.defi-card:active{transform:scale(.99);border-color:#ecb3d8}
+.defi-card-top{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.defi-etat{font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#e9b0d1;background:#e9b0d118;border-radius:100px;padding:5px 10px}
+.defi-etat.budget{color:#f3d9a8;background:#f3d9a818}
+.defi-etat.termine{color:var(--muted);background:#ffffff0d}
+.defi-card strong{font-family:Georgia,serif;font-weight:400;font-size:20px;letter-spacing:-.03em}
+.defi-card p{font-size:12.5px;line-height:1.5;color:#ded3dd;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.defi-card-bas{display:flex;flex-wrap:wrap;gap:5px 12px;color:var(--muted);font-size:11px}
+.defi-participation{align-self:flex-start;font-size:10.5px;font-weight:700;color:#271726;background:#edb6da;border-radius:100px;padding:5px 10px}
+.defis-explorer{margin-top:6px}
+.defis-rail{display:flex;flex-direction:column;gap:11px;margin-top:14px}
+.defi-entete{padding:8px 0 4px}
+.defi-entete h1{font-family:Georgia,serif;font-weight:400;font-size:31px;line-height:1.1;margin:10px 0 10px;letter-spacing:-.045em}
+.defi-regle{font-size:13.5px;line-height:1.6;color:#e2d7e1;margin:12px 0 0}
+.defi-chiffres{display:flex;flex-wrap:wrap;gap:8px 14px;margin:15px 0 4px;color:var(--muted);font-size:11.5px}
+.defi-chiffres span{display:inline-flex;align-items:center;gap:6px}
+.defi-chiffres svg{color:var(--pink)}
+.defi-actions{display:flex;flex-direction:column;gap:9px;margin:18px 0 4px}
+.defi-actions .button{width:100%}
+.defi-supprimer{color:#e8a9c6;margin-top:12px}
+.defi-choix{background:#211b26;border:1px solid #403340;border-radius:16px;padding:15px;margin-top:16px}
+.defi-choix .button{width:100%;margin-top:10px}
+.defi-choix .draft-list img,.defi-choix .draft-list .media-placeholder{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none}
+.defi-entries{display:flex;flex-direction:column;gap:14px}
+.defi-entry{background:#1f1a24;border:1px solid #3d3243;border-radius:20px;overflow:hidden}
+.defi-entry.mine{border-color:#8e5c84;background:#241c28}
+.defi-entry-media{display:block;width:100%;border:0;padding:0;background:#2b2330;position:relative;aspect-ratio:4/3}
+.defi-entry-media img,.defi-entry-media .media-placeholder{width:100%;height:100%;object-fit:cover}
+.defi-rang{position:absolute;left:12px;top:12px;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:750;color:#2a1a26;background:#f0d9e8}
+.defi-rang.rang-1{background:#f5d78e}
+.defi-rang.rang-2{background:#dfe3ea;color:#2a2a33}
+.defi-rang.rang-3{background:#e6c3a6;color:#33241c}
+.defi-entry-corps{padding:13px 14px 14px}
+.defi-entry-auteur{display:flex;align-items:center;gap:8px;background:none;border:0;color:#f2e9f0;padding:0;margin-bottom:9px}
+.defi-entry-auteur strong{font-size:12.5px}
+.defi-toi{font-size:10px;font-weight:700;color:#271726;background:#edb6da;border-radius:100px;padding:3px 8px}
+.defi-entry-corps p{font-size:12.5px;line-height:1.55;color:#ded3dd;margin:0 0 10px}
+.defi-pieces{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.defi-pieces button{border:1px solid #694964;background:#dca4cc14;color:#efc2df;font-size:10.5px;border-radius:100px;padding:6px 10px}
+.defi-budget{font-size:11.5px;color:#e3d7e2}
+.defi-budget.depasse{color:#ffd0d8}
+.defi-entry-bas{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid #3a2f3f;padding-top:11px;color:var(--muted);font-size:11.5px}
+.defi-voter{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 16px;border-radius:100px;border:1px solid #6c4a66;background:#332339;color:#f2dcec;font-size:12px;font-weight:700}
+.defi-voter.voted{border-color:#ecb3d8;background:#edb6da;color:#271726}
+.defi-voter:disabled{opacity:.6}
+.defi-badge{display:inline-flex;align-items:center;gap:8px;width:100%;margin:4px 0 0;padding:12px 14px;border-radius:14px;border:1px solid #6c4a66;background:#dca4cc14;color:#f0c8e2;font-size:12px;font-weight:650;text-align:left}
+.defi-bbcode{}
+.defi-bandeau{background:linear-gradient(180deg,#2a2033,#211a26);border:1px solid #4b3a52;border-radius:18px;padding:15px;margin:18px 0 4px}
+.defi-bandeau .eyebrow{display:inline-flex;align-items:center;gap:6px}
+.defi-bandeau strong{display:block;font-family:Georgia,serif;font-weight:400;font-size:20px;margin:8px 0 6px}
+.defi-bandeau p{font-size:12.5px;line-height:1.55;color:#ded3dd;margin:0 0 8px}
+.defi-bandeau small{display:block;color:var(--muted);font-size:11.5px;margin-top:4px}
+.defi-bandeau small.depasse{color:#ffd0d8}

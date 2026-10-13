@@ -70,7 +70,7 @@ setInterval(cleanup,12*60*60_000).unref();
 function required(req,res,next) { if (!req.user) return fail(res,401,'Connecte-toi pour continuer.'); next(); }
 function session(req,res,user) { const token = randomBytes(32).toString('hex'); run('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',tokenHash(token),user.id,Date.now()+30*86400_000); const secure = req.secure || req.get('x-forwarded-proto') === 'https' || req.get('origin')?.startsWith('https:'); res.cookie('lynora_session',token,{ httpOnly:true,secure:!!secure,sameSite:'lax',path:'/',maxAge:30*86400_000 }); }
 function notice(userId, actorId, kind, postId = null) { if (userId !== actorId) run('INSERT INTO notifications(user_id,actor_id,kind,post_id) VALUES(?,?,?,?)',userId,actorId,kind,postId); }
-function postSelect(viewer) { const id = viewer?.id || 0; return `SELECT p.*, u.username,u.avatar,u.bio AS author_bio, pr.name AS product_name,pr.brand AS product_brand,pr.image AS product_image, (SELECT count(*) FROM likes l WHERE l.post_id=p.id) AS likes_count,(SELECT count(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,(SELECT count(*) FROM helpful h WHERE h.post_id=p.id) AS helpful_count, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.user_id=${id}) AS liked, EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=${id}) AS saved, EXISTS(SELECT 1 FROM helpful h WHERE h.post_id=p.id AND h.user_id=${id}) AS helped FROM posts p JOIN users u ON u.id=p.author_id LEFT JOIN products pr ON pr.id=p.product_id`; }
+function postSelect(viewer) { const id = viewer?.id || 0; return `SELECT p.*, u.username,u.avatar,u.bio AS author_bio, pr.name AS product_name,pr.brand AS product_brand,pr.image AS product_image, (SELECT count(*) FROM likes l WHERE l.post_id=p.id) AS likes_count,(SELECT count(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,(SELECT count(*) FROM helpful h WHERE h.post_id=p.id) AS helpful_count, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.user_id=${id}) AS liked, EXISTS(SELECT 1 FROM saved_posts s WHERE s.post_id=p.id AND s.user_id=${id}) AS saved, EXISTS(SELECT 1 FROM helpful h WHERE h.post_id=p.id AND h.user_id=${id}) AS helped, (SELECT ce.challenge_id FROM challenge_entries ce WHERE ce.post_id=p.id LIMIT 1) AS challenge_id, (SELECT c.title FROM challenge_entries ce JOIN challenges c ON c.id=ce.challenge_id WHERE ce.post_id=p.id LIMIT 1) AS challenge_title FROM posts p JOIN users u ON u.id=p.author_id LEFT JOIN products pr ON pr.id=p.product_id`; }
 // hydratePosts complète chaque publication avec ses médias, ses critères, ses
 // drapeaux (aimé, enregistré, utile) et, pour un look, la liste de ses pièces.
 // L'ordre choisi par l'auteur est conservé : c'est lui qui décide de présenter
@@ -134,6 +134,132 @@ app.get('/api/users/:id',(req,res)=>{const id=numericId(req.params.id);const use
 app.get('/api/users/:id/saved-products',(req,res)=>{const id=numericId(req.params.id);const user=get('SELECT id,favorites_public FROM users WHERE id=?',id);if(!user)return fail(res,404,'Profil introuvable.');if(!user.favorites_public && req.user?.id!==id)return fail(res,403,'Ces favoris sont privés.');res.json({products:all('SELECT pr.* FROM saved_products sp JOIN products pr ON pr.id=sp.product_id WHERE sp.user_id=? ORDER BY pr.id DESC LIMIT 50',id)});});
 app.post('/api/users/:id/follow',required,(req,res)=>{const id=numericId(req.params.id);if(!get('SELECT id FROM users WHERE id=?',id))return fail(res,404,'Profil introuvable.');if(id===req.user.id)return fail(res,400,'Tu ne peux pas te suivre.');const exists=get('SELECT 1 FROM follows WHERE follower_id=? AND followed_id=?',req.user.id,id);if(exists)run('DELETE FROM follows WHERE follower_id=? AND followed_id=?',req.user.id,id);else{run('INSERT INTO follows(follower_id,followed_id) VALUES(?,?)',req.user.id,id);notice(id,req.user.id,'follow');}res.json({following:!exists,followers:get('SELECT count(*) AS n FROM follows WHERE followed_id=?',id).n});});
 app.get('/api/me/following',required,(req,res)=>res.json({users:all('SELECT u.id,u.username,u.avatar,u.bio FROM follows f JOIN users u ON u.id=f.followed_id WHERE f.follower_id=? ORDER BY u.username',req.user.id)}));
+
+/* ============================================================
+   DÉFIS COMMUNAUTAIRES (Fonction 3)
+   Une personne propose un défi (« un look complet à 50 € », « ta routine
+   du matin »…), les autres participent en présentant une création, et
+   votent quand le défi l'autorise.
+   Règles appliquées : une seule participation par personne et par défi,
+   un seul vote par personne et par défi, on ne vote pas pour soi-même,
+   et rien n'est accepté après la date de fin. Tous les compteurs
+   (participations, votes) sont comptés en base : aucun chiffre inventé.
+   ============================================================ */
+const DEFIS_PAR_PERSONNE = 20;      // garde-fou anti-spam
+const PARTICIPATIONS_VISIBLES = 60; // on n'affiche pas 500 participations d'un coup
+const maintenant = () => new Date().toISOString().slice(0, 19).replace('T', ' ');   // même format que la base
+
+// Compteurs réels + ma participation + mon vote, pour une liste de défis.
+function avecCompteurs(defis,user){
+  for(const defi of defis){
+    defi.entries_count=get('SELECT count(*) AS n FROM challenge_entries WHERE challenge_id=?',defi.id).n;
+    defi.votes_count=get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=?',defi.id).n;
+    defi.my_entry=user?get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,user.id)?.post_id||null:null;
+    defi.my_vote=user?get('SELECT post_id FROM challenge_votes WHERE challenge_id=? AND voter_id=?',defi.id,user.id)?.post_id||null:null;
+    defi.finished=!!defi.ends_at&&defi.ends_at<=maintenant();
+  }
+  return defis;
+}
+const defiById=id=>id?get('SELECT c.*,u.username,u.avatar FROM challenges c JOIN users u ON u.id=c.author_id WHERE c.id=?',id):null;
+
+app.get('/api/challenges',(req,res)=>{
+  const statut=text(req.query.status,10);
+  // « ouverts » = sans date de fin, ou dont la date n'est pas encore passée.
+  const filtre=statut==='past'?'AND c.ends_at IS NOT NULL AND c.ends_at<=?':statut==='open'?'AND (c.ends_at IS NULL OR c.ends_at>?)':'';
+  const ordre=statut==='past'?'c.ends_at ASC':'c.ends_at DESC';
+  const defis=all(`SELECT c.*,u.username,u.avatar FROM challenges c JOIN users u ON u.id=c.author_id WHERE 1=1 ${filtre} ORDER BY c.ends_at IS NULL, ${ordre}, c.id DESC LIMIT 40`,...(filtre?[maintenant()]:[]));
+  res.json({challenges:avecCompteurs(defis,req.user)});
+});
+
+app.get('/api/challenges/:id',(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  avecCompteurs([defi],req.user);
+  // Les participations : la publication de chaque personne, avec ses votes réels.
+  const participations=hydratePosts(all(`${postSelect(req.user)} JOIN challenge_entries ce ON ce.post_id=p.id WHERE ce.challenge_id=? AND p.draft=0 ORDER BY p.id DESC LIMIT ?`,defi.id,PARTICIPATIONS_VISIBLES));
+  for(const participation of participations){
+    participation.votes_count=get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,participation.id).n;
+    participation.mine=participation.author_id===req.user?.id;
+    // Défi à budget : on additionne les prix réellement renseignés des pièces.
+    if(defi.budget!=null){
+      const prix=participation.pieces.map(x=>x.price).filter(x=>typeof x==='number');
+      participation.estimated_total=prix.length?prix.reduce((a,b)=>a+b,0):null;
+      participation.pieces_without_price=participation.pieces.length-prix.length;
+    }
+  }
+  // Classement : le plus de votes d'abord, puis la publication la plus récente.
+  participations.sort((a,b)=>b.votes_count-a.votes_count||b.id-a.id);
+  res.json({challenge:defi,entries:participations});
+});
+
+function validerDefi(body,res){
+  const title=text(body.title,80),brief=text(body.brief,600),category=text(body.category,40);
+  const budget=body.budget===''||body.budget==null?null:Number(body.budget);
+  const votes_allowed=body.votesAllowed===false?0:1;
+  const ends_at=text(body.endsAt,30)||null;
+  if(title.length<4)return fail(res,400,'Donne un titre de 4 caractères minimum à ton défi.');
+  if(brief.length<10)return fail(res,400,'Explique la règle du jeu en 10 caractères minimum.');
+  if(!categories.includes(category))return fail(res,400,'Choisis une catégorie pour ton défi.');
+  if(budget!==null&&(!Number.isFinite(budget)||budget<=0||budget>1000000))return fail(res,400,'Le budget doit être un nombre positif en euros.');
+  // La date de fin doit être une date valide, dans le futur.
+  if(ends_at){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(ends_at))return fail(res,400,'La date de fin doit être au format année-mois-jour.');
+    if(ends_at<=new Date().toISOString().slice(0,10))return fail(res,400,'La date de fin doit être dans le futur.');
+  }
+  return {title,brief,category,budget,votes_allowed,ends_at};
+}
+app.post('/api/challenges',required,publishLimiter,(req,res)=>{
+  const v=validerDefi(req.body,res); if(!v)return;
+  if(get('SELECT count(*) AS n FROM challenges WHERE author_id=?',req.user.id).n>=DEFIS_PAR_PERSONNE)return fail(res,400,`Tu as atteint la limite de ${DEFIS_PAR_PERSONNE} défis proposés.`);
+  const id=run('INSERT INTO challenges(author_id,title,brief,category,budget,votes_allowed,ends_at) VALUES(?,?,?,?,?,?,?)',req.user.id,v.title,v.brief,v.category,v.budget,v.votes_allowed,v.ends_at).lastInsertRowid;
+  res.status(201).json({challenge:avecCompteurs([defiById(id)],req.user)[0]});
+});
+app.delete('/api/challenges/:id',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(defi.author_id!==req.user.id)return fail(res,403,'Tu ne peux supprimer que tes défis.');
+  run('DELETE FROM challenges WHERE id=?',defi.id);   // participations et votes partent avec (CASCADE)
+  res.json({ok:true});
+});
+// Participer : on présente une de ses publications publiées. Une seule par défi.
+app.post('/api/challenges/:id/entries',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(defi.ends_at&&defi.ends_at<=maintenant())return fail(res,400,'Ce défi est terminé : les participations sont closes.');
+  const postId=numericId(req.body.postId);
+  const post=postId?get('SELECT id,author_id,draft FROM posts WHERE id=?',postId):null;
+  if(!post||post.draft)return fail(res,404,'Publication introuvable.');
+  if(post.author_id!==req.user.id)return fail(res,403,'Tu ne peux présenter que tes propres publications.');
+  if(get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id))return fail(res,409,'Tu participes déjà à ce défi.');
+  run('INSERT INTO challenge_entries(challenge_id,post_id,user_id) VALUES(?,?,?)',defi.id,post.id,req.user.id);
+  notice(defi.author_id,req.user.id,'challenge_entry',post.id);   // la personne qui a proposé le défi est prévenue
+  res.status(201).json({ok:true,entries_count:get('SELECT count(*) AS n FROM challenge_entries WHERE challenge_id=?',defi.id).n});
+});
+// Retirer sa participation ; les votes reçus repartent avec elle.
+app.delete('/api/challenges/:id/entries',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  const participation=get('SELECT post_id FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id);
+  if(!participation)return fail(res,404,'Tu ne participes pas à ce défi.');
+  run('DELETE FROM challenge_entries WHERE challenge_id=? AND user_id=?',defi.id,req.user.id);
+  run('DELETE FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,participation.post_id);
+  res.json({ok:true});
+});
+// Voter : un seul vote par personne et par défi, jamais pour soi-même.
+app.post('/api/challenges/:id/votes',required,(req,res)=>{
+  const defi=defiById(numericId(req.params.id));
+  if(!defi)return fail(res,404,'Défi introuvable.');
+  if(!defi.votes_allowed)return fail(res,400,'Ce défi ne prévoit pas de vote.');
+  if(defi.ends_at&&defi.ends_at<=maintenant())return fail(res,400,'Ce défi est terminé : les votes sont clos.');
+  const postId=numericId(req.body.postId);
+  const participation=get('SELECT user_id FROM challenge_entries WHERE challenge_id=? AND post_id=?',defi.id,postId||0);
+  if(!participation)return fail(res,404,'Cette participation n’existe pas dans ce défi.');
+  if(participation.user_id===req.user.id)return fail(res,400,'On ne vote pas pour sa propre participation.');
+  // Re-voter remplace le vote précédent : une personne = une voix, déplaçable.
+  run("INSERT INTO challenge_votes(challenge_id,voter_id,post_id) VALUES(?,?,?) ON CONFLICT(challenge_id,voter_id) DO UPDATE SET post_id=excluded.post_id, created_at=datetime('now')",defi.id,req.user.id,postId);
+  notice(participation.user_id,req.user.id,'challenge_vote',postId);
+  res.json({ok:true,votes_count:get('SELECT count(*) AS n FROM challenge_votes WHERE challenge_id=? AND post_id=?',defi.id,postId).n,my_vote:postId});
+});
 
 /* ============================================================
    LISTES PARTAGEABLES (« Mes listes » — Fonction 4)
